@@ -1,0 +1,26 @@
+name: Deploy via Coolify
+
+on:
+  push:
+    branches:
+      - main  # Change this if your deploy branch is different
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H s1.devonauts.co.uk >> ~/.ssh/known_hosts
+
+      - name: Trigger Coolify Webhook
+        run: |
+          curl -X POST \
+            "https://s1.devonauts.co.uk/api/v1/deploy?uuid=ncko8ww0okgo0w4gocgg8c08&force=false"
