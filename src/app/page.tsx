@@ -11,7 +11,7 @@ export default function WelcomePage() {
       
       <div className="flex flex-col items-center justify-center space-y-8 text-center px-4">
         <h1 className="text-4xl font-bold tracking-tight sm:text-5xl md:text-6xl">
-          Welcome to Our Site
+          Welcome to Our Site !
         </h1>
         
         <p className="max-w-prose text-lg text-muted-foreground">
