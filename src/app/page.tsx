@@ -1,33 +1,62 @@
+"use client";
+
 import { Button } from "@/components/ui/button";
-import { ModeToggle } from "@/components/mode-toggle";
-import Link from "next/link";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
+import { RocketIcon, InfoCircledIcon } from "@radix-ui/react-icons";
+import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 
 export default function WelcomePage() {
+  const router = useRouter();
+
   return (
-    <div className="flex flex-col min-h-screen items-center justify-center bg-background">
-      <div className="absolute top-4 right-4">
-        <ModeToggle />
-      </div>
-      
-      <div className="flex flex-col items-center justify-center space-y-8 text-center px-4">
-        <h1 className="text-4xl font-bold tracking-tight sm:text-5xl md:text-6xl">
-          Welcome to Our Site
-        </h1>
-        
-        <p className="max-w-prose text-lg text-muted-foreground">
-          Discover amazing content and features tailored just for you!
-        </p>
-        
-        <div className="flex gap-4">
-          <Button asChild size="lg">
-            <Link href="/home">Enter Site</Link>
-          </Button>
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-purple-50 p-4">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+      >
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <CardTitle className="text-3xl font-bold text-gray-900">
+              Welcome to Our Platform
+            </CardTitle>
+            <CardDescription className="mt-2 text-gray-600">
+              Get started with your journey today
+            </CardDescription>
+          </CardHeader>
           
-          <Button variant="outline" size="lg" asChild>
-            <Link href="/about">Learn More</Link>
-          </Button>
-        </div>
-      </div>
+          <CardContent className="flex flex-col space-y-4">
+            <div className="flex items-center justify-center py-4">
+              <RocketIcon className="h-16 w-16 text-primary" />
+            </div>
+            
+            <p className="text-center text-gray-700">
+              Discover amazing features and tools that will help you achieve your goals faster and more efficiently.
+            </p>
+          </CardContent>
+          
+          <CardFooter className="flex flex-col space-y-3">
+            <Button 
+              onClick={() => router.push("/dashboard")}
+              className="w-full"
+              size="lg"
+            >
+              Enter Dashboard
+            </Button>
+            
+            <Button 
+              onClick={() => router.push("/about")}
+              variant="outline"
+              className="w-full"
+              size="lg"
+            >
+              <InfoCircledIcon className="mr-2 h-4 w-4" />
+              Learn More
+            </Button>
+          </CardFooter>
+        </Card>
+      </motion.div>
     </div>
   );
 }
