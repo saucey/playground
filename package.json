@@ -20,6 +20,7 @@
   },
   "homepage": "https://github.com/saucey/playground#readme",
   "dependencies": {
+    "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-dropdown-menu": "^2.1.15",
     "@radix-ui/react-icons": "^1.3.2",
     "@radix-ui/react-progress": "^1.1.7",
@@ -27,12 +28,14 @@
     "@radix-ui/react-slot": "^1.2.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
     "express": "^5.1.0",
     "framer-motion": "^12.19.1",
     "lucide-react": "^0.523.0",
     "next": "^15.3.4",
     "next-themes": "^0.4.6",
     "react": "^19.1.0",
+    "react-day-picker": "^9.7.0",
     "react-dom": "^19.1.0",
     "recharts": "^3.0.0",
     "tailwind-merge": "^3.3.1"
