@@ -9,58 +9,28 @@ const socket: Socket = io("wss://video-call.devonauts.co.uk", {
   reconnectionDelay: 1000,
 });
 
+interface RegisteredUser {
+  socketId: string;
+  customId: string;
+}
+
 const VideoCall: React.FC = () => {
   const [me, setMe] = useState<string>("");
+  const [customId, setCustomId] = useState<string>("");
+  const [isRegistered, setIsRegistered] = useState<boolean>(false);
+  const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [receivingCall, setReceivingCall] = useState<boolean>(false);
   const [caller, setCaller] = useState<string>("");
   const [callerSignal, setCallerSignal] = useState<SignalData | null>(null);
   const [callAccepted, setCallAccepted] = useState<boolean>(false);
   const [idToCall, setIdToCall] = useState<string>("");
+  const [callEnded, setCallEnded] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [calling, setCalling] = useState<boolean>(false);
-  const [customId, setCustomId] = useState<string>("");
-  const [registered, setRegistered] = useState<boolean>(false);
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<Peer.Instance | null>(null);
-
-  useEffect(() => {
-    if (registered) {
-      socket.connect();
-    }
-
-    return () => {
-      socket.disconnect();
-    };
-  }, [registered]);
-
-  useEffect(() => {
-    if (!registered) return;
-
-    socket.on("connect", () => {
-      console.log("Connected as:", customId);
-      setMe(customId);
-      socket.emit("register-id", customId);
-    });
-
-    socket.on("connect_error", (err) => {
-      console.error("Connection error:", err);
-      setError("Connection failed. Please check your network.");
-    });
-
-    socket.on("user-not-found", ({ userToCall }) => {
-      setError(`User ${userToCall} not found`);
-      setCalling(false);
-    });
-
-    return () => {
-      socket.off("connect");
-      socket.off("connect_error");
-      socket.off("user-not-found");
-    };
-  }, [registered, customId]);
 
   useEffect(() => {
     const setupMedia = async () => {
@@ -79,39 +49,76 @@ const VideoCall: React.FC = () => {
       }
     };
 
-    if (registered) {
-      setupMedia();
+    setupMedia();
 
-      socket.on("call-made", ({ from, signal }: { from: string; signal: SignalData }) => {
-        setReceivingCall(true);
-        setCaller(from);
-        setCallerSignal(signal);
-      });
+    socket.on("connect", () => {
+      console.log("Connected with ID:", socket.id);
+      setMe(socket.id);
+    });
 
-      socket.on("call-answered", (signal: SignalData) => {
-        setCallAccepted(true);
-        if (connectionRef.current) {
-          connectionRef.current.signal(signal);
-        }
-      });
+    socket.on("registered", (users: RegisteredUser[]) => {
+      setIsRegistered(true);
+      setRegisteredUsers(users);
+    });
 
-      return () => {
-        socket.off("call-made");
-        socket.off("call-answered");
-      };
-    }
-  }, [registered]);
+    socket.on("user-registered", (user: RegisteredUser) => {
+      setRegisteredUsers(prev => [...prev, user]);
+    });
 
-  useEffect(() => {
+    socket.on("user-unregistered", (socketId: string) => {
+      setRegisteredUsers(prev => prev.filter(u => u.socketId !== socketId));
+    });
+
+    socket.on("connect_error", (err) => {
+      console.error("Connection error:", err);
+      setError("Connection failed. Please check your network.");
+    });
+
+    socket.on("call-made", ({ from, signal, customId: callerCustomId }: { from: string; signal: SignalData; customId: string }) => {
+      setReceivingCall(true);
+      setCaller(from);
+      setCallerSignal(signal);
+      setError(`${callerCustomId} is calling you...`);
+    });
+
+    socket.on("call-answered", (signal: SignalData) => {
+      setCallAccepted(true);
+      if (connectionRef.current) {
+        connectionRef.current.signal(signal);
+      }
+    });
+
+    socket.on("call-ended", () => {
+      endCall();
+    });
+
     return () => {
+      socket.off("connect");
+      socket.off("registered");
+      socket.off("user-registered");
+      socket.off("user-unregistered");
+      socket.off("connect_error");
+      socket.off("call-made");
+      socket.off("call-answered");
+      socket.off("call-ended");
+
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
+
       if (connectionRef.current) {
         connectionRef.current.destroy();
       }
     };
-  }, [stream]);
+  }, []);
+
+  const registerUser = () => {
+    if (!customId.trim()) {
+      setError("Please enter a custom ID");
+      return;
+    }
+    socket.emit("register", customId);
+  };
 
   const callUser = (id: string) => {
     if (!stream) {
@@ -119,8 +126,7 @@ const VideoCall: React.FC = () => {
       return;
     }
 
-    setCalling(true);
-
+    setCallEnded(false);
     const peer = new Peer({
       initiator: true,
       trickle: false,
@@ -132,29 +138,29 @@ const VideoCall: React.FC = () => {
         userToCall: id,
         signalData: data,
         from: me,
+        customId: customId
       });
     });
 
     peer.on("stream", (currentStream: MediaStream) => {
       console.log("Caller received remote stream");
-      setCalling(false);
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
       }
     });
 
-    peer.on("connect", () => console.log("Caller peer connected"));
-    
+    peer.on("connect", () => {
+      console.log("Caller peer connected");
+      setCallAccepted(true);
+    });
+
     peer.on("error", (err) => {
       console.error("Peer error:", err);
       setError("Call connection failed");
-      setCalling(false);
     });
 
     peer.on("close", () => {
-      console.log("Peer connection closed");
-      setCallAccepted(false);
-      setCalling(false);
+      endCall();
     });
 
     connectionRef.current = peer;
@@ -166,8 +172,7 @@ const VideoCall: React.FC = () => {
       return;
     }
 
-    setCallAccepted(true);
-
+    setCallEnded(false);
     const peer = new Peer({
       initiator: false,
       trickle: false,
@@ -185,11 +190,18 @@ const VideoCall: React.FC = () => {
       }
     });
 
-    peer.on("connect", () => console.log("Callee peer connected"));
-    
+    peer.on("connect", () => {
+      console.log("Callee peer connected");
+      setCallAccepted(true);
+    });
+
     peer.on("error", (err) => {
       console.error("Peer error:", err);
       setError("Call connection failed");
+    });
+
+    peer.on("close", () => {
+      endCall();
     });
 
     peer.signal(callerSignal);
@@ -199,37 +211,18 @@ const VideoCall: React.FC = () => {
   const endCall = () => {
     setCallAccepted(false);
     setReceivingCall(false);
-    setCalling(false);
+    setCallEnded(true);
+    
     if (connectionRef.current) {
       connectionRef.current.destroy();
     }
+    
     if (userVideo.current) {
       userVideo.current.srcObject = null;
     }
+    
+    socket.emit("end-call");
   };
-
-  if (!registered) {
-    return (
-      <div className="p-4 max-w-md mx-auto">
-        <h1 className="text-xl font-bold mb-2">Enter Test User ID</h1>
-        <input
-          type="text"
-          placeholder="e.g., user1 or user2"
-          value={customId}
-          onChange={(e) => setCustomId(e.target.value)}
-          className="border p-2 rounded mb-2 w-full"
-        />
-        <button
-          onClick={() => {
-            if (customId.trim()) setRegistered(true);
-          }}
-          className="bg-blue-500 text-white px-4 py-2 rounded w-full"
-        >
-          Register
-        </button>
-      </div>
-    );
-  }
 
   return (
     <div className="p-4 max-w-md mx-auto">
@@ -241,85 +234,115 @@ const VideoCall: React.FC = () => {
         </div>
       )}
 
-      <div className="flex gap-4">
-        <video 
-          playsInline 
-          muted 
-          ref={myVideo} 
-          autoPlay 
-          className="w-full rounded-lg border border-red-500"
-          style={{ maxWidth: "200px" }}
-        />
-        {callAccepted && (
-          <video 
-            playsInline 
-            ref={userVideo} 
-            autoPlay 
-            className="w-full rounded-lg"
-            style={{ maxWidth: "200px" }}
-          />
-        )}
-      </div>
-
-      <div className="mt-4">
-        <p className="mb-2">Your ID: {me || "Connecting..."}</p>
-        <div className="flex flex-col space-y-2">
-          <input
-            type="text"
-            placeholder="Enter ID to call"
-            value={idToCall}
-            onChange={(e) => setIdToCall(e.target.value)}
-            className="border p-2 rounded"
-          />
-          <button 
-            onClick={() => callUser(idToCall)} 
-            className="bg-blue-500 text-white px-4 py-2 rounded disabled:bg-blue-300"
-            disabled={!me || !idToCall || calling}
-          >
-            Call
-          </button>
-        </div>
-      </div>
-
-      {calling && (
-        <div className="mt-4 p-3 bg-blue-100 rounded">
-          <p className="text-blue-800">Calling {idToCall}...</p>
-          <button 
-            onClick={endCall}
-            className="bg-red-500 text-white px-4 py-2 rounded mt-2 w-full"
-          >
-            Cancel Call
-          </button>
-        </div>
-      )}
-
-      {receivingCall && !callAccepted && (
-        <div className="mt-4 p-3 bg-gray-100 rounded">
-          <p className="mb-2">{caller} is calling you...</p>
+      {!isRegistered ? (
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold mb-2">Register Your ID</h2>
           <div className="flex space-x-2">
+            <input
+              type="text"
+              placeholder="Enter your custom ID"
+              value={customId}
+              onChange={(e) => setCustomId(e.target.value)}
+              className="border p-2 rounded flex-1"
+            />
             <button 
-              onClick={answerCall} 
-              className="bg-green-500 text-white px-4 py-2 rounded flex-1"
+              onClick={registerUser} 
+              className="bg-blue-500 text-white px-4 py-2 rounded"
+              disabled={!customId.trim()}
             >
-              Answer
-            </button>
-            <button 
-              onClick={endCall} 
-              className="bg-red-500 text-white px-4 py-2 rounded flex-1"
-            >
-              Decline
+              Register
             </button>
           </div>
         </div>
-      )}
+      ) : (
+        <>
+          <div className="flex gap-4 mb-4">
+            <video 
+              playsInline 
+              muted 
+              ref={myVideo} 
+              autoPlay 
+              className="w-full rounded-lg border border-gray-300"
+              style={{ maxWidth: "200px" }}
+            />
+            <video 
+              playsInline 
+              ref={userVideo} 
+              autoPlay 
+              className="w-full rounded-lg border border-gray-300"
+              style={{ 
+                maxWidth: "200px", 
+                display: callAccepted ? "block" : "none",
+                backgroundColor: callAccepted ? "transparent" : "black"
+              }}
+            />
+          </div>
 
-      {callAccepted && (
-        <button 
-          onClick={endCall}
-          className="bg-red-500 text-white px-4 py-2 rounded mt-4 w-full"
-        >
-          End Call
-        </button>
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold mb-2">Available Users</h2>
+            <ul className="max-h-40 overflow-y-auto border rounded p-2">
+              {registeredUsers.filter(u => u.socketId !== me).map(user => (
+                <li 
+                  key={user.socketId} 
+                  className="p-2 hover:bg-gray-100 cursor-pointer"
+                  onClick={() => setIdToCall(user.socketId)}
+                >
+                  {user.customId} ({user.socketId.slice(0, 6)})
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="mt-4">
+            <p className="mb-2">Your ID: {customId} ({me.slice(0, 6)})</p>
+            <div className="flex flex-col space-y-2">
+              <input
+                type="text"
+                placeholder="Enter ID to call"
+                value={idToCall}
+                onChange={(e) => setIdToCall(e.target.value)}
+                className="border p-2 rounded"
+                disabled={callAccepted}
+              />
+              <div className="flex space-x-2">
+                <button 
+                  onClick={() => callUser(idToCall)} 
+                  className="bg-blue-500 text-white px-4 py-2 rounded flex-1 disabled:bg-blue-300"
+                  disabled={!me || !idToCall || callAccepted}
+                >
+                  Call
+                </button>
+                {callAccepted && (
+                  <button 
+                    onClick={endCall} 
+                    className="bg-red-500 text-white px-4 py-2 rounded flex-1"
+                  >
+                    End Call
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {receivingCall && !callAccepted && (
+            <div className="mt-4 p-3 bg-gray-100 rounded">
+              <div className="flex space-x-2">
+                <button 
+                  onClick={answerCall} 
+                  className="bg-green-500 text-white px-4 py-2 rounded flex-1"
+                >
+                  Answer
+                </button>
+                <button 
+                  onClick={endCall} 
+                  className="bg-red-500 text-white px-4 py-2 rounded flex-1"
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
