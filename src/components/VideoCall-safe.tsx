@@ -3,11 +3,18 @@ import React, { useEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 
-const socket: Socket = io("http://localhost:5555", {
+const SOCKET_URL =
+  process.env.NODE_ENV! === "development"
+    ? "wss://video-call.devonauts.co.uk"
+    : "http://localhost:5555";
+
+// Initialize the socket
+const socket: Socket = io(SOCKET_URL, {
   transports: ["websocket"],
   reconnectionAttempts: 5,
   reconnectionDelay: 1000,
 });
+
 
 interface RegisteredUser {
   socketId: string;
@@ -33,56 +40,32 @@ const VideoCall: React.FC = () => {
   const userVideo = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<Peer.Instance | null>(null);
 
+  // Helper function to check if call button should be disabled
   const isCallButtonDisabled = () => {
     return !me || !idToCall || callAccepted || callingStatus !== "" || receivingCall;
-  };
-
-  const resetCallState = () => {
-    setCallAccepted(false);
-    setReceivingCall(false);
-    setCallEnded(true);
-    setCallingStatus("");
-    setCaller("");
-    setCallerSignal(null);
-    
-    if (connectionRef.current) {
-      connectionRef.current.destroy();
-      connectionRef.current = null;
-    }
-    
-    if (userVideo.current) {
-      userVideo.current.srcObject = null;
-    }
   };
 
   useEffect(() => {
     const setupMedia = async () => {
       try {
         const currentStream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: "user" }, 
+          video: { facingMode: "user" },
           audio: true 
         });
         console.log("Got local stream:", currentStream);
         setStream(currentStream);
+        if (myVideo.current) {
+          console.log("Assigning stream to myVideo:", currentStream);
+          myVideo.current.srcObject = currentStream;
+        }
       } catch (err) {
         console.error("Failed to get media devices", err);
         setError("Could not access camera/microphone. Please check permissions.");
       }
     };
-  
-    setupMedia();
-  }, []);
-  
-  // This effect will run once `stream` and `myVideo.current` are both available
-  useEffect(() => {
-    if (stream && myVideo.current) {
-      console.log("Assigning stream to myVideo:", stream);
-      myVideo.current.srcObject = stream;
-      myVideo.current.play().catch(err => console.error("Video playback error:", err));
-    }
-  }, [stream, myVideo.current]);
 
-  useEffect(() => {
+    setupMedia();
+
     socket.on("connect", () => {
       console.log("Connected with ID:", socket.id);
       setMe(socket.id);
@@ -106,13 +89,11 @@ const VideoCall: React.FC = () => {
       setError("Connection failed. Please check your network.");
     });
 
-    socket.on("call-made", ({ from, signal, customId: callerCustomId }) => {
-      if (!callAccepted && !callingStatus) {
-        setReceivingCall(true);
-        setCaller(from);
-        setCallerSignal(signal);
-        setError(`${callerCustomId} is calling you...`);
-      }
+    socket.on("call-made", ({ from, signal, customId: callerCustomId }: { from: string; signal: SignalData; customId: string }) => {
+      setReceivingCall(true);
+      setCaller(from);
+      setCallerSignal(signal);
+      setError(`${callerCustomId} is calling you...`);
     });
 
     socket.on("call-answered", (signal: SignalData) => {
@@ -125,11 +106,12 @@ const VideoCall: React.FC = () => {
 
     socket.on("call-rejected", () => {
       setCallingStatus("Call was rejected");
-      setTimeout(() => resetCallState(), 2000);
+      setTimeout(() => setCallingStatus(""), 3000);
+      endCall();
     });
 
     socket.on("call-ended", () => {
-      resetCallState();
+      endCall();
     });
 
     return () => {
@@ -146,7 +128,10 @@ const VideoCall: React.FC = () => {
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
-      resetCallState();
+
+      if (connectionRef.current) {
+        connectionRef.current.destroy();
+      }
     };
   }, []);
 
@@ -164,7 +149,7 @@ const VideoCall: React.FC = () => {
       return;
     }
 
-    resetCallState();
+    setCallEnded(false);
     setCallingStatus(`Calling ${registeredUsers.find(u => u.socketId === id)?.customId || id.slice(0, 6)}...`);
     
     const peer = new Peer({
@@ -197,11 +182,11 @@ const VideoCall: React.FC = () => {
       console.error("Peer error:", err);
       setError("Call connection failed");
       setCallingStatus("Call failed");
-      setTimeout(() => resetCallState(), 2000);
+      setTimeout(() => setCallingStatus(""), 3000);
     });
 
     peer.on("close", () => {
-      resetCallState();
+      endCall();
     });
 
     connectionRef.current = peer;
@@ -213,6 +198,7 @@ const VideoCall: React.FC = () => {
       return;
     }
 
+    setCallEnded(false);
     const peer = new Peer({
       initiator: false,
       trickle: false,
@@ -236,11 +222,10 @@ const VideoCall: React.FC = () => {
     peer.on("error", (err) => {
       console.error("Peer error:", err);
       setError("Call connection failed");
-      resetCallState();
     });
 
     peer.on("close", () => {
-      resetCallState();
+      endCall();
     });
 
     peer.signal(callerSignal);
@@ -249,12 +234,25 @@ const VideoCall: React.FC = () => {
 
   const rejectCall = () => {
     socket.emit("reject-call", { to: caller });
-    resetCallState();
+    endCall();
   };
 
   const endCall = () => {
+    setCallAccepted(false);
+    setReceivingCall(false);
+    setCallEnded(true);
+    setCallingStatus("");
+    
+    if (connectionRef.current) {
+      connectionRef.current.destroy();
+      connectionRef.current = null;
+    }
+    
+    if (userVideo.current) {
+      userVideo.current.srcObject = null;
+    }
+    
     socket.emit("end-call");
-    resetCallState();
   };
 
   return (
