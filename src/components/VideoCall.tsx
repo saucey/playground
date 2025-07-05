@@ -143,14 +143,12 @@ const VideoCall: React.FC = () => {
     });
 
     peer.on("stream", (currentStream: MediaStream) => {
-      console.log("Caller received remote stream");
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
       }
     });
 
     peer.on("connect", () => {
-      console.log("Caller peer connected");
       setCallAccepted(true);
     });
 
@@ -184,14 +182,12 @@ const VideoCall: React.FC = () => {
     });
 
     peer.on("stream", (currentStream: MediaStream) => {
-      console.log("Callee received remote stream");
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
       }
     });
 
     peer.on("connect", () => {
-      console.log("Callee peer connected");
       setCallAccepted(true);
     });
 
@@ -215,6 +211,7 @@ const VideoCall: React.FC = () => {
     
     if (connectionRef.current) {
       connectionRef.current.destroy();
+      connectionRef.current = null;
     }
     
     if (userVideo.current) {
@@ -231,6 +228,7 @@ const VideoCall: React.FC = () => {
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           {error}
+          <button onClick={() => setError(null)} className="float-right font-bold">×</button>
         </div>
       )}
 
@@ -257,25 +255,37 @@ const VideoCall: React.FC = () => {
       ) : (
         <>
           <div className="flex gap-4 mb-4">
-            <video 
-              playsInline 
-              muted 
-              ref={myVideo} 
-              autoPlay 
-              className="w-full rounded-lg border border-gray-300"
-              style={{ maxWidth: "200px" }}
-            />
-            <video 
-              playsInline 
-              ref={userVideo} 
-              autoPlay 
-              className="w-full rounded-lg border border-gray-300"
-              style={{ 
-                maxWidth: "200px", 
-                display: callAccepted ? "block" : "none",
-                backgroundColor: callAccepted ? "transparent" : "black"
-              }}
-            />
+            <div className="relative">
+              <video 
+                playsInline 
+                muted 
+                ref={myVideo} 
+                autoPlay 
+                className="w-full rounded-lg border border-gray-300"
+                style={{ maxWidth: "200px" }}
+              />
+              <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
+                You
+              </div>
+            </div>
+            <div className="relative">
+              <video 
+                playsInline 
+                ref={userVideo} 
+                autoPlay 
+                className="w-full rounded-lg border border-gray-300"
+                style={{ 
+                  maxWidth: "200px", 
+                  display: callAccepted ? "block" : "none",
+                  backgroundColor: callAccepted ? "transparent" : "black"
+                }}
+              />
+              {callAccepted && (
+                <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
+                  {registeredUsers.find(u => u.socketId === idToCall)?.customId || "Remote"}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="mb-4">
@@ -284,17 +294,18 @@ const VideoCall: React.FC = () => {
               {registeredUsers.filter(u => u.socketId !== me).map(user => (
                 <li 
                   key={user.socketId} 
-                  className="p-2 hover:bg-gray-100 cursor-pointer"
+                  className="p-2 hover:bg-gray-100 cursor-pointer flex justify-between items-center"
                   onClick={() => setIdToCall(user.socketId)}
                 >
-                  {user.customId} ({user.socketId.slice(0, 6)})
+                  <span>{user.customId}</span>
+                  <span className="text-xs text-gray-500">({user.socketId.slice(0, 6)})</span>
                 </li>
               ))}
             </ul>
           </div>
 
           <div className="mt-4">
-            <p className="mb-2">Your ID: {customId} ({me.slice(0, 6)})</p>
+            <p className="mb-2">Your ID: <span className="font-semibold">{customId}</span> <span className="text-xs text-gray-500">({me.slice(0, 6)})</span></p>
             <div className="flex flex-col space-y-2">
               <input
                 type="text"
@@ -305,14 +316,15 @@ const VideoCall: React.FC = () => {
                 disabled={callAccepted}
               />
               <div className="flex space-x-2">
-                <button 
-                  onClick={() => callUser(idToCall)} 
-                  className="bg-blue-500 text-white px-4 py-2 rounded flex-1 disabled:bg-blue-300"
-                  disabled={!me || !idToCall || callAccepted}
-                >
-                  Call
-                </button>
-                {callAccepted && (
+                {!callAccepted ? (
+                  <button 
+                    onClick={() => callUser(idToCall)} 
+                    className="bg-blue-500 text-white px-4 py-2 rounded flex-1 disabled:bg-blue-300"
+                    disabled={!me || !idToCall}
+                  >
+                    Call
+                  </button>
+                ) : (
                   <button 
                     onClick={endCall} 
                     className="bg-red-500 text-white px-4 py-2 rounded flex-1"
@@ -326,6 +338,7 @@ const VideoCall: React.FC = () => {
 
           {receivingCall && !callAccepted && (
             <div className="mt-4 p-3 bg-gray-100 rounded">
+              <p className="mb-2">{registeredUsers.find(u => u.socketId === caller)?.customId || caller.slice(0, 6)} is calling...</p>
               <div className="flex space-x-2">
                 <button 
                   onClick={answerCall} 
