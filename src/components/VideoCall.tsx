@@ -4,8 +4,8 @@ import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 
 // Use your computer's local IP or deployed server URL here
-const socket: Socket = io("ws://s4w80gocwk0k4o04o4go840s.79.99.41.39.sslip.io", {
-  transports: ["websocket"], // Force WebSocket for better mobile support
+const socket: Socket = io("wss://video-call.devonauts.co.uk", {
+  transports: ["websocket"], // Force WebSocket only
   reconnectionAttempts: 5,
   reconnectionDelay: 1000,
 });
