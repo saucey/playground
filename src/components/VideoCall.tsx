@@ -55,30 +55,45 @@ const VideoCall: React.FC = () => {
     }
   };
 
+  // Initialize media stream and video element
   useEffect(() => {
     const setupMedia = async () => {
       try {
         const currentStream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: "user" }, 
+          video: { facingMode: "user" },
           audio: true 
         });
-        console.log("Got local stream:", currentStream);
         setStream(currentStream);
+        
+        // Directly assign stream to video element
+        if (myVideo.current) {
+          myVideo.current.srcObject = currentStream;
+          myVideo.current.onloadedmetadata = () => {
+            myVideo.current?.play().catch(e => console.error("Video play error:", e));
+          };
+        }
       } catch (err) {
         console.error("Failed to get media devices", err);
         setError("Could not access camera/microphone. Please check permissions.");
       }
     };
-  
+
     setupMedia();
+
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
   }, []);
-  
-  // This effect will run once `stream` and `myVideo.current` are both available
+
+  // Fallback to ensure video element gets stream
   useEffect(() => {
-    if (stream && myVideo.current) {
-      console.log("Assigning stream to myVideo:", stream);
+    if (stream && myVideo.current && !myVideo.current.srcObject) {
       myVideo.current.srcObject = stream;
-      myVideo.current.play().catch(err => console.error("Video playback error:", err));
+      myVideo.current.onloadedmetadata = () => {
+        myVideo.current?.play().catch(e => console.error("Video play error:", e));
+      };
     }
   }, [stream, myVideo.current]);
 
@@ -142,11 +157,6 @@ const VideoCall: React.FC = () => {
       socket.off("call-answered");
       socket.off("call-rejected");
       socket.off("call-ended");
-
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-      resetCallState();
     };
   }, []);
 
@@ -305,7 +315,11 @@ const VideoCall: React.FC = () => {
                 ref={myVideo} 
                 autoPlay 
                 className="w-full rounded-lg border border-gray-300"
-                style={{ maxWidth: "200px" }}
+                style={{ 
+                  maxWidth: "200px",
+                  display: "block",
+                  transform: "scaleX(-1)" // Mirror effect
+                }}
               />
               <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
                 You
