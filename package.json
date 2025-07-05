@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "start-server": "ts-node server/index.ts"
+    "start-socket": "ts-node server/index.ts"
   },
   "repository": {
     "type": "git",
