@@ -3,7 +3,13 @@ import React, { useEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 
-const socket: Socket = io("http://localhost:5555", {
+const SOCKET_URL =
+  process.env.NODE_ENV! === "development"
+    ? "wss://video-call.devonauts.co.uk"
+    : "http://localhost:5555";
+
+// Initialize the socket
+const socket: Socket = io(SOCKET_URL, {
   transports: ["websocket"],
   reconnectionAttempts: 5,
   reconnectionDelay: 1000,
