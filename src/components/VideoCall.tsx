@@ -5,7 +5,7 @@ import Peer, { SignalData } from "simple-peer";
 
 // Use your computer's local IP or deployed server URL here
 const socket: Socket = io("wss://video-call.devonauts.co.uk", {
-  transports: ["websocket"], // Force WebSocket only
+  transports: ["websocket"],
   reconnectionAttempts: 5,
   reconnectionDelay: 1000,
 });
@@ -28,7 +28,7 @@ const VideoCall: React.FC = () => {
     const setupMedia = async () => {
       try {
         const currentStream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: "user" }, // Prefer front camera on mobile
+          video: { facingMode: "user" },
           audio: true 
         });
         setStream(currentStream);
@@ -59,16 +59,25 @@ const VideoCall: React.FC = () => {
       setCallerSignal(signal);
     });
 
+    // 🔧 Listen for answer outside of callUser to avoid race condition
+    socket.on("call-answered", (signal: SignalData) => {
+      console.log("Received answer from callee");
+      setCallAccepted(true);
+      if (connectionRef.current) {
+        connectionRef.current.signal(signal);
+      }
+    });
+
     return () => {
-      // Cleanup
       socket.off("connect");
       socket.off("connect_error");
       socket.off("call-made");
-      
+      socket.off("call-answered");
+
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
-      
+
       if (connectionRef.current) {
         connectionRef.current.destroy();
       }
@@ -96,19 +105,16 @@ const VideoCall: React.FC = () => {
     });
 
     peer.on("stream", (currentStream: MediaStream) => {
+      console.log("Caller received remote stream");
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
       }
     });
 
+    peer.on("connect", () => console.log("Caller peer connected"));
     peer.on("error", (err) => {
       console.error("Peer error:", err);
       setError("Call connection failed");
-    });
-
-    socket.once("call-answered", (signal: SignalData) => {
-      setCallAccepted(true);
-      peer.signal(signal);
     });
 
     connectionRef.current = peer;
@@ -133,11 +139,13 @@ const VideoCall: React.FC = () => {
     });
 
     peer.on("stream", (currentStream: MediaStream) => {
+      console.log("Callee received remote stream");
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
       }
     });
 
+    peer.on("connect", () => console.log("Callee peer connected"));
     peer.on("error", (err) => {
       console.error("Peer error:", err);
       setError("Call connection failed");
@@ -150,7 +158,7 @@ const VideoCall: React.FC = () => {
   return (
     <div className="p-4 max-w-md mx-auto">
       <h1 className="text-xl font-bold mb-2">Video Calling App</h1>
-      
+      <h2>Hey Charlie, I'm a video call app</h2>
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           {error}
