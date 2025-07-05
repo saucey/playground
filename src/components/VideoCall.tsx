@@ -3,7 +3,6 @@ import React, { useEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 
-// Use your computer's local IP or deployed server URL here
 const socket: Socket = io("wss://video-call.devonauts.co.uk", {
   transports: ["websocket"],
   reconnectionAttempts: 5,
@@ -19,16 +18,15 @@ const VideoCall: React.FC = () => {
   const [callAccepted, setCallAccepted] = useState<boolean>(false);
   const [idToCall, setIdToCall] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [calling, setCalling] = useState<boolean>(false);
+  const [customId, setCustomId] = useState<string>("");
+  const [registered, setRegistered] = useState<boolean>(false);
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<Peer.Instance | null>(null);
 
-  const [customId, setCustomId] = useState<string>(""); // new
-  const [registered, setRegistered] = useState<boolean>(false); // new
-
   useEffect(() => {
-    // No socket.connect() until user submits their custom ID
     if (registered) {
       socket.connect();
     }
@@ -44,11 +42,25 @@ const VideoCall: React.FC = () => {
     socket.on("connect", () => {
       console.log("Connected as:", customId);
       setMe(customId);
-      socket.emit("register-id", customId); // send custom ID to server
+      socket.emit("register-id", customId);
     });
 
-    // ... other socket.on handlers (as you already have)
-  }, [registered]);
+    socket.on("connect_error", (err) => {
+      console.error("Connection error:", err);
+      setError("Connection failed. Please check your network.");
+    });
+
+    socket.on("user-not-found", ({ userToCall }) => {
+      setError(`User ${userToCall} not found`);
+      setCalling(false);
+    });
+
+    return () => {
+      socket.off("connect");
+      socket.off("connect_error");
+      socket.off("user-not-found");
+    };
+  }, [registered, customId]);
 
   useEffect(() => {
     const setupMedia = async () => {
@@ -67,54 +79,47 @@ const VideoCall: React.FC = () => {
       }
     };
 
-    setupMedia();
+    if (registered) {
+      setupMedia();
 
-    socket.on("connect", () => {
-      console.log("Connected with ID:", socket.id);
-      setMe(socket.id);
-    });
+      socket.on("call-made", ({ from, signal }: { from: string; signal: SignalData }) => {
+        setReceivingCall(true);
+        setCaller(from);
+        setCallerSignal(signal);
+      });
 
-    socket.on("connect_error", (err) => {
-      console.error("Connection error:", err);
-      setError("Connection failed. Please check your network.");
-    });
+      socket.on("call-answered", (signal: SignalData) => {
+        setCallAccepted(true);
+        if (connectionRef.current) {
+          connectionRef.current.signal(signal);
+        }
+      });
 
-    socket.on("call-made", ({ from, signal }: { from: string; signal: SignalData }) => {
-      setReceivingCall(true);
-      setCaller(from);
-      setCallerSignal(signal);
-    });
+      return () => {
+        socket.off("call-made");
+        socket.off("call-answered");
+      };
+    }
+  }, [registered]);
 
-    // 🔧 Listen for answer outside of callUser to avoid race condition
-    socket.on("call-answered", (signal: SignalData) => {
-      console.log("Received answer from callee");
-      setCallAccepted(true);
-      if (connectionRef.current) {
-        connectionRef.current.signal(signal);
-      }
-    });
-
+  useEffect(() => {
     return () => {
-      socket.off("connect");
-      socket.off("connect_error");
-      socket.off("call-made");
-      socket.off("call-answered");
-
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
-
       if (connectionRef.current) {
         connectionRef.current.destroy();
       }
     };
-  }, []);
+  }, [stream]);
 
   const callUser = (id: string) => {
     if (!stream) {
       setError("No local stream available");
       return;
     }
+
+    setCalling(true);
 
     const peer = new Peer({
       initiator: true,
@@ -132,15 +137,24 @@ const VideoCall: React.FC = () => {
 
     peer.on("stream", (currentStream: MediaStream) => {
       console.log("Caller received remote stream");
+      setCalling(false);
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
       }
     });
 
     peer.on("connect", () => console.log("Caller peer connected"));
+    
     peer.on("error", (err) => {
       console.error("Peer error:", err);
       setError("Call connection failed");
+      setCalling(false);
+    });
+
+    peer.on("close", () => {
+      console.log("Peer connection closed");
+      setCallAccepted(false);
+      setCalling(false);
     });
 
     connectionRef.current = peer;
@@ -172,6 +186,7 @@ const VideoCall: React.FC = () => {
     });
 
     peer.on("connect", () => console.log("Callee peer connected"));
+    
     peer.on("error", (err) => {
       console.error("Peer error:", err);
       setError("Call connection failed");
@@ -180,7 +195,19 @@ const VideoCall: React.FC = () => {
     peer.signal(callerSignal);
     connectionRef.current = peer;
   };
-  
+
+  const endCall = () => {
+    setCallAccepted(false);
+    setReceivingCall(false);
+    setCalling(false);
+    if (connectionRef.current) {
+      connectionRef.current.destroy();
+    }
+    if (userVideo.current) {
+      userVideo.current.srcObject = null;
+    }
+  };
+
   if (!registered) {
     return (
       <div className="p-4 max-w-md mx-auto">
@@ -247,12 +274,24 @@ const VideoCall: React.FC = () => {
           <button 
             onClick={() => callUser(idToCall)} 
             className="bg-blue-500 text-white px-4 py-2 rounded disabled:bg-blue-300"
-            disabled={!me || !idToCall}
+            disabled={!me || !idToCall || calling}
           >
             Call
           </button>
         </div>
       </div>
+
+      {calling && (
+        <div className="mt-4 p-3 bg-blue-100 rounded">
+          <p className="text-blue-800">Calling {idToCall}...</p>
+          <button 
+            onClick={endCall}
+            className="bg-red-500 text-white px-4 py-2 rounded mt-2 w-full"
+          >
+            Cancel Call
+          </button>
+        </div>
+      )}
 
       {receivingCall && !callAccepted && (
         <div className="mt-4 p-3 bg-gray-100 rounded">
@@ -265,13 +304,22 @@ const VideoCall: React.FC = () => {
               Answer
             </button>
             <button 
-              onClick={() => setReceivingCall(false)} 
+              onClick={endCall} 
               className="bg-red-500 text-white px-4 py-2 rounded flex-1"
             >
               Decline
             </button>
           </div>
         </div>
+      )}
+
+      {callAccepted && (
+        <button 
+          onClick={endCall}
+          className="bg-red-500 text-white px-4 py-2 rounded mt-4 w-full"
+        >
+          End Call
+        </button>
       )}
     </div>
   );
