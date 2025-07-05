@@ -3,12 +3,10 @@ import React, { useEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 
-const SOCKET_URL =
-  process.env.NODE_ENV! === "development"
-    ? "wss://video-call.devonauts.co.uk"
-    : "http://localhost:5555";
+const SOCKET_URL = process.env.NODE_ENV === "development" 
+  ? "wss://video-call.devonauts.co.uk" 
+  : "http://localhost:5555";
 
-// Initialize the socket
 const socket: Socket = io(SOCKET_URL, {
   transports: ["websocket"],
   reconnectionAttempts: 5,
@@ -34,6 +32,7 @@ const VideoCall: React.FC = () => {
   const [callEnded, setCallEnded] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [callingStatus, setCallingStatus] = useState<string>("");
+  const [isMuted, setIsMuted] = useState(false);
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
@@ -61,19 +60,30 @@ const VideoCall: React.FC = () => {
     }
   };
 
-  // Initialize media stream and video element
+  // Initialize media stream with proper mobile audio handling
   useEffect(() => {
     const setupMedia = async () => {
       try {
-        const currentStream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: "user" },
+        // First get video only to trigger permissions
+        const videoStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: "user" }
+        });
+        
+        // Then get audio separately (works better on mobile)
+        const audioStream = await navigator.mediaDevices.getUserMedia({ 
           audio: true 
         });
-        setStream(currentStream);
+
+        // Combine the streams
+        const combinedStream = new MediaStream([
+          ...videoStream.getVideoTracks(),
+          ...audioStream.getAudioTracks()
+        ]);
         
-        // Directly assign stream to video element
+        setStream(combinedStream);
+        
         if (myVideo.current) {
-          myVideo.current.srcObject = currentStream;
+          myVideo.current.srcObject = combinedStream;
           myVideo.current.onloadedmetadata = () => {
             myVideo.current?.play().catch(e => console.error("Video play error:", e));
           };
@@ -92,6 +102,21 @@ const VideoCall: React.FC = () => {
       }
     };
   }, []);
+
+  // Mobile audio workaround - create and play a silent audio element
+  useEffect(() => {
+    if (callAccepted && typeof window !== 'undefined') {
+      const audioElement = document.createElement('audio');
+      audioElement.autoplay = true;
+      audioElement.muted = false;
+      audioElement.volume = 0.01; // Nearly silent but enough to trigger audio context
+      document.body.appendChild(audioElement);
+      
+      return () => {
+        document.body.removeChild(audioElement);
+      };
+    }
+  }, [callAccepted]);
 
   // Fallback to ensure video element gets stream
   useEffect(() => {
@@ -166,6 +191,16 @@ const VideoCall: React.FC = () => {
     };
   }, []);
 
+  const toggleMute = () => {
+    if (stream) {
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length > 0) {
+        audioTracks[0].enabled = !audioTracks[0].enabled;
+        setIsMuted(!audioTracks[0].enabled);
+      }
+    }
+  };
+
   const registerUser = () => {
     if (!customId.trim()) {
       setError("Please enter a custom ID");
@@ -201,6 +236,8 @@ const VideoCall: React.FC = () => {
     peer.on("stream", (currentStream: MediaStream) => {
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
+        // Mobile audio workaround - play the remote stream
+        userVideo.current.play().catch(e => console.error("Remote video play error:", e));
       }
     });
 
@@ -242,6 +279,8 @@ const VideoCall: React.FC = () => {
     peer.on("stream", (currentStream: MediaStream) => {
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
+        // Mobile audio workaround - play the remote stream
+        userVideo.current.play().catch(e => console.error("Remote video play error:", e));
       }
     });
 
@@ -317,7 +356,7 @@ const VideoCall: React.FC = () => {
             <div className="relative">
               <video 
                 playsInline 
-                muted 
+                muted={isMuted}
                 ref={myVideo} 
                 autoPlay 
                 className="w-full rounded-lg border border-gray-300"
@@ -330,6 +369,14 @@ const VideoCall: React.FC = () => {
               <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
                 You
               </div>
+              {callAccepted && (
+                <button 
+                  onClick={toggleMute}
+                  className="absolute top-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs"
+                >
+                  {isMuted ? "Unmute" : "Mute"}
+                </button>
+              )}
             </div>
             <div className="relative">
               <video 
