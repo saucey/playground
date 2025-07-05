@@ -24,6 +24,32 @@ const VideoCall: React.FC = () => {
   const userVideo = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<Peer.Instance | null>(null);
 
+  const [customId, setCustomId] = useState<string>(""); // new
+  const [registered, setRegistered] = useState<boolean>(false); // new
+
+  useEffect(() => {
+    // No socket.connect() until user submits their custom ID
+    if (registered) {
+      socket.connect();
+    }
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [registered]);
+
+  useEffect(() => {
+    if (!registered) return;
+
+    socket.on("connect", () => {
+      console.log("Connected as:", customId);
+      setMe(customId);
+      socket.emit("register-id", customId); // send custom ID to server
+    });
+
+    // ... other socket.on handlers (as you already have)
+  }, [registered]);
+
   useEffect(() => {
     const setupMedia = async () => {
       try {
@@ -154,6 +180,29 @@ const VideoCall: React.FC = () => {
     peer.signal(callerSignal);
     connectionRef.current = peer;
   };
+  
+  if (!registered) {
+    return (
+      <div className="p-4 max-w-md mx-auto">
+        <h1 className="text-xl font-bold mb-2">Enter Test User ID</h1>
+        <input
+          type="text"
+          placeholder="e.g., user1 or user2"
+          value={customId}
+          onChange={(e) => setCustomId(e.target.value)}
+          className="border p-2 rounded mb-2 w-full"
+        />
+        <button
+          onClick={() => {
+            if (customId.trim()) setRegistered(true);
+          }}
+          className="bg-blue-500 text-white px-4 py-2 rounded w-full"
+        >
+          Register
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 max-w-md mx-auto">
