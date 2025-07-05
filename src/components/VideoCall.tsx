@@ -171,7 +171,7 @@ const VideoCall: React.FC = () => {
           muted 
           ref={myVideo} 
           autoPlay 
-          className="w-full rounded-lg"
+          className="w-full rounded-lg border border-red-500"
           style={{ maxWidth: "200px" }}
         />
         {callAccepted && (
