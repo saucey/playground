@@ -9,81 +9,28 @@ const socket: Socket = io("wss://video-call.devonauts.co.uk", {
   reconnectionDelay: 1000,
 });
 
+interface RegisteredUser {
+  socketId: string;
+  customId: string;
+}
+
 const VideoCall: React.FC = () => {
   const [me, setMe] = useState<string>("");
+  const [customId, setCustomId] = useState<string>("");
+  const [isRegistered, setIsRegistered] = useState<boolean>(false);
+  const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [receivingCall, setReceivingCall] = useState<boolean>(false);
   const [caller, setCaller] = useState<string>("");
   const [callerSignal, setCallerSignal] = useState<SignalData | null>(null);
   const [callAccepted, setCallAccepted] = useState<boolean>(false);
   const [idToCall, setIdToCall] = useState<string>("");
+  const [callEnded, setCallEnded] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [calling, setCalling] = useState<boolean>(false);
-  const [customId, setCustomId] = useState<string>("");
-  const [registered, setRegistered] = useState<boolean>(false);
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<Peer.Instance | null>(null);
-
-  // Reset all call-related states
-  const resetCallStates = () => {
-    setCallAccepted(false);
-    setReceivingCall(false);
-    setCalling(false);
-    setCaller("");
-    setCallerSignal(null);
-    setIdToCall("");
-  };
-
-  const endCall = () => {
-    if (connectionRef.current) {
-      connectionRef.current.destroy();
-      connectionRef.current = null;
-    }
-    resetCallStates();
-    
-    // Clear the remote video
-    if (userVideo.current) {
-      userVideo.current.srcObject = null;
-    }
-  };
-
-  useEffect(() => {
-    if (registered) {
-      socket.connect();
-    }
-
-    return () => {
-      socket.disconnect();
-    };
-  }, [registered]);
-
-  useEffect(() => {
-    if (!registered) return;
-
-    socket.on("connect", () => {
-      console.log("Connected as:", customId);
-      setMe(customId);
-      socket.emit("register-id", customId);
-    });
-
-    socket.on("connect_error", (err) => {
-      console.error("Connection error:", err);
-      setError("Connection failed. Please check your network.");
-    });
-
-    socket.on("user-not-found", ({ userToCall }) => {
-      setError(`User ${userToCall} not found`);
-      setCalling(false);
-    });
-
-    return () => {
-      socket.off("connect");
-      socket.off("connect_error");
-      socket.off("user-not-found");
-    };
-  }, [registered, customId]);
 
   useEffect(() => {
     const setupMedia = async () => {
@@ -102,43 +49,76 @@ const VideoCall: React.FC = () => {
       }
     };
 
-    if (registered) {
-      setupMedia();
+    setupMedia();
 
-      socket.on("call-made", ({ from, signal }: { from: string; signal: SignalData }) => {
-        setReceivingCall(true);
-        setCaller(from);
-        setCallerSignal(signal);
-      });
+    socket.on("connect", () => {
+      console.log("Connected with ID:", socket.id);
+      setMe(socket.id);
+    });
 
-      socket.on("call-answered", (signal: SignalData) => {
-        setCallAccepted(true);
-        setCalling(false);
-        if (connectionRef.current) {
-          connectionRef.current.signal(signal);
-        }
-      });
+    socket.on("registered", (users: RegisteredUser[]) => {
+      setIsRegistered(true);
+      setRegisteredUsers(users);
+    });
 
-      socket.on("call-ended", () => {
-        endCall();
-      });
+    socket.on("user-registered", (user: RegisteredUser) => {
+      setRegisteredUsers(prev => [...prev, user]);
+    });
 
-      return () => {
-        socket.off("call-made");
-        socket.off("call-answered");
-        socket.off("call-ended");
-      };
-    }
-  }, [registered]);
+    socket.on("user-unregistered", (socketId: string) => {
+      setRegisteredUsers(prev => prev.filter(u => u.socketId !== socketId));
+    });
 
-  useEffect(() => {
-    return () => {
+    socket.on("connect_error", (err) => {
+      console.error("Connection error:", err);
+      setError("Connection failed. Please check your network.");
+    });
+
+    socket.on("call-made", ({ from, signal, customId: callerCustomId }: { from: string; signal: SignalData; customId: string }) => {
+      setReceivingCall(true);
+      setCaller(from);
+      setCallerSignal(signal);
+      setError(`${callerCustomId} is calling you...`);
+    });
+
+    socket.on("call-answered", (signal: SignalData) => {
+      setCallAccepted(true);
+      if (connectionRef.current) {
+        connectionRef.current.signal(signal);
+      }
+    });
+
+    socket.on("call-ended", () => {
       endCall();
+    });
+
+    return () => {
+      socket.off("connect");
+      socket.off("registered");
+      socket.off("user-registered");
+      socket.off("user-unregistered");
+      socket.off("connect_error");
+      socket.off("call-made");
+      socket.off("call-answered");
+      socket.off("call-ended");
+
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
+
+      if (connectionRef.current) {
+        connectionRef.current.destroy();
+      }
     };
-  }, [stream]);
+  }, []);
+
+  const registerUser = () => {
+    if (!customId.trim()) {
+      setError("Please enter a custom ID");
+      return;
+    }
+    socket.emit("register", customId);
+  };
 
   const callUser = (id: string) => {
     if (!stream) {
@@ -146,8 +126,7 @@ const VideoCall: React.FC = () => {
       return;
     }
 
-    setCalling(true);
-
+    setCallEnded(false);
     const peer = new Peer({
       initiator: true,
       trickle: false,
@@ -159,69 +138,31 @@ const VideoCall: React.FC = () => {
         userToCall: id,
         signalData: data,
         from: me,
+        customId: customId
       });
     });
 
     peer.on("stream", (currentStream: MediaStream) => {
+      console.log("Caller received remote stream");
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
       }
     });
 
     peer.on("connect", () => {
-      console.log("Peer connected");
-    });
-
-    peer.on("close", () => {
-      endCall();
-    });
-
-    peer.on("error", (err) => {
-      console.error("Peer error:", err);
-      setError("Call connection failed");
-      endCall();
-    });
-
-    connectionRef.current = peer;
-  };
-
-  const answerCall = () => {
-    if (!stream || !callerSignal) {
-      setError("Cannot answer call: missing stream or signal");
-      return;
-    }
-
-    const peer = new Peer({
-      initiator: false,
-      trickle: false,
-      stream: stream,
-    });
-
-    peer.on("signal", (data: SignalData) => {
-      socket.emit("answer-call", { signal: data, to: caller });
-    });
-
-    peer.on("stream", (currentStream: MediaStream) => {
-      if (userVideo.current) {
-        userVideo.current.srcObject = currentStream;
-      }
-    });
-
-    peer.on("connect", () => {
+      console.log("Caller peer connected");
       setCallAccepted(true);
     });
 
+    peer.on("error", (err) => {
+      console.error("Peer error:", err);
+      setError("Call connection failed");
+    });
+
     peer.on("close", () => {
       endCall();
     });
 
-    peer.on("error", (err) => {
-      console.error("Peer error:", err);
-      setError("Call connection failed");
-      endCall();
-    });
-
-    peer.signal(callerSignal);
     connectionRef.current = peer;
   };
 
