@@ -158,7 +158,7 @@ const VideoCall: React.FC = () => {
   return (
     <div className="p-4 max-w-md mx-auto">
       <h1 className="text-xl font-bold mb-2">Video Calling App</h1>
-      <h2>Hey Charlie, I'm a video call app</h2>
+      
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           {error}
