@@ -29,7 +29,6 @@ const VideoCall: React.FC = () => {
   const [callerSignal, setCallerSignal] = useState<SignalData | null>(null);
   const [callAccepted, setCallAccepted] = useState<boolean>(false);
   const [idToCall, setIdToCall] = useState<string>("");
-  const [callEnded, setCallEnded] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [callingStatus, setCallingStatus] = useState<string>("");
   const [isMuted, setIsMuted] = useState(false);
@@ -45,7 +44,6 @@ const VideoCall: React.FC = () => {
   const resetCallState = () => {
     setCallAccepted(false);
     setReceivingCall(false);
-    setCallEnded(true);
     setCallingStatus("");
     setCaller("");
     setCallerSignal(null);
@@ -120,7 +118,9 @@ const VideoCall: React.FC = () => {
 
   // Fallback to ensure video element gets stream
   useEffect(() => {
+    console.log(myVideo)
     if (stream && myVideo.current && !myVideo.current.srcObject) {
+      console.log('1')
       myVideo.current.srcObject = stream;
       myVideo.current.onloadedmetadata = () => {
         myVideo.current?.play().catch(e => console.error("Video play error:", e));
@@ -178,6 +178,10 @@ const VideoCall: React.FC = () => {
       resetCallState();
     });
 
+    socket.on("registration-error", (message: string) => {
+      setError(message);
+    });
+
     return () => {
       socket.off("connect");
       socket.off("registered");
@@ -188,6 +192,7 @@ const VideoCall: React.FC = () => {
       socket.off("call-answered");
       socket.off("call-rejected");
       socket.off("call-ended");
+      socket.off("registration-error");
     };
   }, []);
 
@@ -206,6 +211,7 @@ const VideoCall: React.FC = () => {
       setError("Please enter a custom ID");
       return;
     }
+    setError(null); // Clear any previous errors 
     socket.emit("register", customId);
   };
 
@@ -344,7 +350,7 @@ const VideoCall: React.FC = () => {
             <button 
               onClick={registerUser} 
               className="bg-blue-500 text-white px-4 py-2 rounded"
-              disabled={!customId.trim()}
+              // disabled={!customId.trim()}
             >
               Register
             </button>
