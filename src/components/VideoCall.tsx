@@ -166,60 +166,76 @@ const VideoCall: React.FC = () => {
     if (userVideo.current) {
       userVideo.current.srcObject = null;
     }
+        // Clean up any previous recording URL
+    if (recordedVideoUrl) {
+      URL.revokeObjectURL(recordedVideoUrl);
+      setRecordedVideoUrl(null);
+    }
   };
 
   const startScreenRecording = async () => {
     try {
       const cameraStream = stream;
+      if (!cameraStream) {
+        throw new Error("No camera stream available");
+      }
+  
       const screenStream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
         audio: true
       });
-
-      const combinedStream = new MediaStream();
-      [cameraStream, screenStream].forEach(s => {
-        s?.getTracks().forEach(track => combinedStream.addTrack(track));
-      });
-
-      const mediaRecorder = new MediaRecorder(combinedStream, {
+  
+      // Create a new stream for recording only (don't modify the original stream)
+      const recordingStream = new MediaStream();
+      cameraStream.getTracks().forEach(track => recordingStream.addTrack(track.clone()));
+      screenStream.getTracks().forEach(track => recordingStream.addTrack(track));
+  
+      const mediaRecorder = new MediaRecorder(recordingStream, {
         mimeType: 'video/webm'
       });
-
+  
       mediaRecorderRef.current = mediaRecorder;
-      setRecordedChunks([]);
-
+      setRecordedChunks([]); // Reset chunks when starting new recording
+  
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           setRecordedChunks(prev => [...prev, event.data]);
         }
       };
-
+  
       mediaRecorder.onstop = () => {
         const blob = new Blob(recordedChunks, { type: 'video/webm' });
         const url = URL.createObjectURL(blob);
         setRecordedVideoUrl(url);
         setIsRecording(false);
+        
+        // Clean up the recording stream
+        recordingStream.getTracks().forEach(track => track.stop());
       };
-
-      mediaRecorder.start();
+  
+      // Request data every second to ensure we capture everything
+      mediaRecorder.start(1000);
       setIsRecording(true);
-
-      recordingIntervalRef.current = setInterval(() => {
-        if (!callAccepted) {
-          stopScreenRecording();
-        }
-      }, 1000);
-
+  
+      // Handle when user stops sharing screen via browser UI
+      screenStream.getVideoTracks()[0].onended = () => {
+        stopScreenRecording();
+      };
+  
     } catch (err) {
       console.error("Error starting screen recording:", err);
       setError("Could not start screen recording. Please check permissions.");
     }
   };
 
+
   const stopScreenRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      // Only stop the screen tracks, not the camera tracks
+      mediaRecorderRef.current.stream.getTracks()
+        .filter(track => track.kind === 'video' && track.getSettings().displaySurface)
+        .forEach(track => track.stop());
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current);
       }
