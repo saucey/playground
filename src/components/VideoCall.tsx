@@ -39,7 +39,7 @@ const VideoCall: React.FC = () => {
   const [callingStatus, setCallingStatus] = useState<string>("");
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(true);
-  const [audioContextAllowed, setAudioContextAllowed] = useState(false);
+  const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
@@ -47,7 +47,6 @@ const VideoCall: React.FC = () => {
   const outgoingRingtoneRef = useRef<HTMLAudioElement | null>(null);
   const incomingRingtoneRef = useRef<HTMLAudioElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
 
   const isCallButtonDisabled = () => {
     const targetUser = registeredUsers.find(u => u.socketId === idToCall);
@@ -55,47 +54,15 @@ const VideoCall: React.FC = () => {
            (targetUser?.inCall && targetUser.inCallWith !== me);
   };
 
-  const enableAudio = async () => {
-    try {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        gainNodeRef.current = audioContextRef.current.createGain();
-        gainNodeRef.current.gain.value = 1.0;
-        gainNodeRef.current.connect(audioContextRef.current.destination);
-      }
-      
-      if (audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume();
-      }
-      
-      setAudioContextAllowed(true);
-      return true;
-    } catch (err) {
-      console.error("Audio permission error:", err);
-      setError("Please allow audio permissions to hear ringtones");
-      return false;
-    }
-  };
-
-  const playOutgoingRingtone = async () => {
+  const playOutgoingRingtone = () => {
     if (!outgoingRingtoneRef.current) {
       outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
       outgoingRingtoneRef.current.loop = true;
-      outgoingRingtoneRef.current.load();
     }
-
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isMobile && !audioContextAllowed) {
-      setError("Tap the screen to enable ringtone");
-      return;
-    }
-
-    try {
-      await outgoingRingtoneRef.current.play();
-    } catch (e) {
+    outgoingRingtoneRef.current.play().catch(e => {
       console.error("Couldn't play outgoing ringtone:", e);
-      setError("Couldn't play ringtone. Tap to enable audio.");
-    }
+      setNeedsUserInteraction(true);
+    });
   };
 
   const stopOutgoingRingtone = () => {
@@ -105,31 +72,61 @@ const VideoCall: React.FC = () => {
     }
   };
 
-  const playIncomingRingtone = async () => {
-    if (!incomingRingtoneRef.current) {
-      incomingRingtoneRef.current = new Audio(RINGTONE_INCOMING);
-      incomingRingtoneRef.current.loop = true;
-      incomingRingtoneRef.current.load();
-    }
-
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isMobile && !audioContextAllowed) {
-      setError("Tap the screen to enable ringtone");
-      return;
-    }
-
-    try {
-      await incomingRingtoneRef.current.play();
-    } catch (e) {
-      console.error("Couldn't play incoming ringtone:", e);
-      setError("Couldn't play ringtone. Tap to enable audio.");
+  const playIncomingRingtone = () => {
+    // Try Web Audio API first for better mobile support
+    if (typeof window !== 'undefined' && window.AudioContext) {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      
+      fetch(RINGTONE_INCOMING)
+        .then(response => response.arrayBuffer())
+        .then(arrayBuffer => audioContextRef.current?.decodeAudioData(arrayBuffer))
+        .then(audioBuffer => {
+          const source = audioContextRef.current?.createBufferSource();
+          if (source) {
+            source.buffer = audioBuffer;
+            source.loop = true;
+            source.connect(audioContextRef.current.destination);
+            source.start();
+            incomingRingtoneRef.current = source as any;
+          }
+        })
+        .catch(() => {
+          // Fallback to HTML5 Audio
+          if (!incomingRingtoneRef.current) {
+            incomingRingtoneRef.current = new Audio(RINGTONE_INCOMING);
+            incomingRingtoneRef.current.loop = true;
+          }
+          incomingRingtoneRef.current.play().catch(e => {
+            console.error("Couldn't play incoming ringtone:", e);
+            setNeedsUserInteraction(true);
+          });
+        });
+    } else {
+      // Fallback to HTML5 Audio
+      if (!incomingRingtoneRef.current) {
+        incomingRingtoneRef.current = new Audio(RINGTONE_INCOMING);
+        incomingRingtoneRef.current.loop = true;
+      }
+      incomingRingtoneRef.current.play().catch(e => {
+        console.error("Couldn't play incoming ringtone:", e);
+        setNeedsUserInteraction(true);
+      });
     }
   };
 
   const stopIncomingRingtone = () => {
     if (incomingRingtoneRef.current) {
-      incomingRingtoneRef.current.pause();
-      incomingRingtoneRef.current.currentTime = 0;
+      if (typeof incomingRingtoneRef.current.stop === 'function') {
+        // Web Audio API source
+        (incomingRingtoneRef.current as AudioBufferSourceNode).stop();
+      } else {
+        // HTML5 Audio
+        (incomingRingtoneRef.current as HTMLAudioElement).pause();
+        (incomingRingtoneRef.current as HTMLAudioElement).currentTime = 0;
+      }
+      incomingRingtoneRef.current = null;
     }
   };
 
@@ -139,6 +136,7 @@ const VideoCall: React.FC = () => {
     setCallingStatus("");
     setCaller("");
     setCallerSignal(null);
+    setNeedsUserInteraction(false);
     
     stopOutgoingRingtone();
     stopIncomingRingtone();
@@ -153,7 +151,7 @@ const VideoCall: React.FC = () => {
     }
   };
 
-  // Initialize media stream and pre-load audio
+  // Initialize media stream
   useEffect(() => {
     const setupMedia = async () => {
       try {
@@ -181,34 +179,50 @@ const VideoCall: React.FC = () => {
       }
     };
   
-    // Pre-load audio files
-    outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
-    outgoingRingtoneRef.current.load();
-    incomingRingtoneRef.current = new Audio(RINGTONE_INCOMING);
-    incomingRingtoneRef.current.load();
-    
     setupMedia();
   
     return () => {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
       }
-      stopOutgoingRingtone();
-      stopIncomingRingtone();
+      resetCallState();
     };
   }, []);
 
   // Mobile audio workaround
   useEffect(() => {
+    if (receivingCall) {
+      const handleUserInteraction = () => {
+        playIncomingRingtone();
+        document.removeEventListener('click', handleUserInteraction);
+        document.removeEventListener('touchstart', handleUserInteraction);
+      };
+
+      document.addEventListener('click', handleUserInteraction);
+      document.addEventListener('touchstart', handleUserInteraction);
+
+      return () => {
+        document.removeEventListener('click', handleUserInteraction);
+        document.removeEventListener('touchstart', handleUserInteraction);
+      };
+    }
+  }, [receivingCall]);
+
+  useEffect(() => {
     if (callAccepted && typeof window !== 'undefined') {
-      const audioElement = document.createElement('audio');
-      audioElement.autoplay = true;
-      audioElement.muted = false;
-      audioElement.volume = 0.01;
-      document.body.appendChild(audioElement);
+      const handleUserInteraction = () => {
+        if (userVideo.current) {
+          userVideo.current.muted = false;
+          userVideo.current.play().catch(e => console.log("Play attempt failed:", e));
+        }
+      };
+      
+      document.addEventListener('click', handleUserInteraction);
+      document.addEventListener('touchstart', handleUserInteraction);
       
       return () => {
-        document.body.removeChild(audioElement);
+        document.removeEventListener('click', handleUserInteraction);
+        document.removeEventListener('touchstart', handleUserInteraction);
       };
     }
   }, [callAccepted]);
@@ -364,22 +378,16 @@ const VideoCall: React.FC = () => {
   };
 
   // Call management
-  const callUser = async (id: string) => {
+  const callUser = (id: string) => {
     if (!stream) {
       setError("No local stream available");
       return;
     }
 
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isMobile && !audioContextAllowed) {
-      const enabled = await enableAudio();
-      if (!enabled) return;
-    }
-
     resetCallState();
     const targetUser = registeredUsers.find(u => u.socketId === id);
     setCallingStatus(`Calling ${targetUser?.customId || id.slice(0, 6)}...`);
-    await playOutgoingRingtone();
+    playOutgoingRingtone();
     
     const peer = new Peer({
       initiator: true,
@@ -424,16 +432,10 @@ const VideoCall: React.FC = () => {
     connectionRef.current = peer;
   };
 
-  const answerCall = async () => {
+  const answerCall = () => {
     if (!stream || !callerSignal) {
       setError("Cannot answer call: missing stream or signal");
       return;
-    }
-
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isMobile && !audioContextAllowed) {
-      const enabled = await enableAudio();
-      if (!enabled) return;
     }
 
     stopIncomingRingtone();
@@ -483,27 +485,14 @@ const VideoCall: React.FC = () => {
     resetCallState();
   };
 
-  const handleContainerClick = async () => {
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isMobile && !audioContextAllowed) {
-      await enableAudio();
-    }
-  };
-
   return (
-    <div className="p-4 max-w-md mx-auto" onClick={handleContainerClick}>
+    <div className="p-4 max-w-md mx-auto">
       <h1 className="text-xl font-bold mb-2">Video Calling App</h1>
       
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           {error}
           <button onClick={() => setError(null)} className="float-right font-bold">×</button>
-        </div>
-      )}
-
-      {!audioContextAllowed && (
-        <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded mb-4">
-          Tap anywhere to enable ringtones
         </div>
       )}
 
@@ -673,6 +662,20 @@ const VideoCall: React.FC = () => {
           {receivingCall && !callAccepted && (
             <div className="mt-4 p-3 bg-gray-100 rounded">
               <p className="mb-2">{registeredUsers.find(u => u.socketId === caller)?.customId || caller.slice(0, 6)} is calling...</p>
+              {needsUserInteraction && (
+                <div className="mb-2 p-2 bg-yellow-100 rounded">
+                  <p className="text-sm">Tap the button below to enable call audio:</p>
+                  <button 
+                    onClick={() => {
+                      playIncomingRingtone();
+                      setNeedsUserInteraction(false);
+                    }}
+                    className="bg-blue-500 text-white px-4 py-2 rounded mt-2 w-full"
+                  >
+                    Enable Sound
+                  </button>
+                </div>
+              )}
               <div className="flex space-x-2">
                 <button 
                   onClick={answerCall} 
