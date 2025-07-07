@@ -2,12 +2,47 @@
 import React, { useEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+// import { Icons } from "@/components/icons";
+import {
+  Phone,
+  Video,
+  Mic,
+  MicOff,
+  PhoneOff,
+  AlertCircle,
+  X,
+  UserPlus,
+  VideoOff
+} from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+
+export const Icons = {
+  videoOff: VideoOff,
+  userPlus: UserPlus,
+  x: X,
+  alertCircle: AlertCircle,
+  phone: Phone,
+  video: Video,
+  mic: Mic,
+  micOff: MicOff,
+  phoneOff: PhoneOff,
+};
 
 const SOCKET_URL = process.env.NODE_ENV === 'development' 
   ? "http://localhost:5555"
   : "wss://video-call.devonauts.co.uk";
 
-const socket: Socket = io("wss://video-call.devonauts.co.uk", {
+const socket: Socket = io(SOCKET_URL, {
   transports: ["websocket"],
   reconnectionAttempts: 5,
   reconnectionDelay: 1000,
@@ -20,7 +55,7 @@ interface RegisteredUser {
   inCallWith?: string;
 }
 
-const VideoCall: React.FC = () => {
+export default function VideoCall() {
   const [me, setMe] = useState<string>("");
   const [customId, setCustomId] = useState<string>("");
   const [isRegistered, setIsRegistered] = useState<boolean>(false);
@@ -63,13 +98,17 @@ const VideoCall: React.FC = () => {
     }
   };
 
-  // Initialize media stream
+  // Initialize media stream with echo cancellation
   useEffect(() => {
     const setupMedia = async () => {
       try {
         const mediaStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user" },
-          audio: true,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
         });
         setStream(mediaStream);
   
@@ -99,21 +138,6 @@ const VideoCall: React.FC = () => {
       }
     };
   }, []);
-
-  // Mobile audio workaround
-  useEffect(() => {
-    if (callAccepted && typeof window !== 'undefined') {
-      const audioElement = document.createElement('audio');
-      audioElement.autoplay = true;
-      audioElement.muted = false;
-      audioElement.volume = 0.01;
-      document.body.appendChild(audioElement);
-      
-      return () => {
-        document.body.removeChild(audioElement);
-      };
-    }
-  }, [callAccepted]);
 
   // Socket event listeners
   useEffect(() => {
@@ -189,7 +213,6 @@ const VideoCall: React.FC = () => {
     };
   }, []);
 
-  // Media control functions
   const toggleMute = () => {
     if (stream) {
       const audioTracks = stream.getAudioTracks();
@@ -252,7 +275,6 @@ const VideoCall: React.FC = () => {
     }
   };
 
-  // User registration
   const registerUser = () => {
     if (!customId.trim()) {
       setError("Please enter a custom ID");
@@ -262,7 +284,6 @@ const VideoCall: React.FC = () => {
     socket.emit("register", customId);
   };
 
-  // Call management
   const callUser = (id: string) => {
     if (!stream) {
       setError("No local stream available");
@@ -276,6 +297,11 @@ const VideoCall: React.FC = () => {
       initiator: true,
       trickle: false,
       stream: stream,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' }
+        ]
+      }
     });
 
     peer.on("signal", (data: SignalData) => {
@@ -323,6 +349,11 @@ const VideoCall: React.FC = () => {
       initiator: false,
       trickle: false,
       stream: stream,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' }
+        ]
+      }
     });
 
     peer.on("signal", (data: SignalData) => {
@@ -365,202 +396,257 @@ const VideoCall: React.FC = () => {
   };
 
   return (
-    <div className="p-4 max-w-md mx-auto">
-      <h1 className="text-xl font-bold mb-2">Video Calling App</h1>
-      
-      {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-          {error}
-          <button onClick={() => setError(null)} className="float-right font-bold">×</button>
-        </div>
-      )}
+    <div className="container mx-auto p-4 max-w-4xl">
+      <Card className="border-0 shadow-none sm:shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-2xl font-bold flex items-center gap-2">
+            <Icons.video className="w-6 h-6" />
+            Video Connect
+          </CardTitle>
+        </CardHeader>
 
-      {callingStatus && (
-        <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4">
-          {callingStatus}
-          <button onClick={endCall} className="float-right font-bold">×</button>
-        </div>
-      )}
+        {error && (
+          <Alert variant="destructive" className="mb-4">
+            <Icons.alertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>
+              {error}
+              <Button variant="ghost" size="sm" onClick={() => setError(null)} className="ml-2">
+                <Icons.x className="h-4 w-4" />
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
 
-      {!isRegistered ? (
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold mb-2">Register Your ID</h2>
-          <div className="flex space-x-2">
-            <input
-              type="text"
-              placeholder="Enter your custom ID"
-              value={customId}
-              onChange={(e) => setCustomId(e.target.value)}
-              className="border p-2 rounded flex-1"
-            />
-            <button 
-              onClick={registerUser} 
-              className="bg-blue-500 text-white px-4 py-2 rounded"
-            >
-              Register
-            </button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="flex gap-4 mb-4">
-            <div className="relative">
-              <video 
-                playsInline 
-                muted={true}
-                ref={myVideo} 
-                autoPlay 
-                className="w-full rounded-lg border border-gray-300"
-                style={{ 
-                  maxWidth: "200px",
-                  display: "block",
-                  transform: "scaleX(-1)",
-                  backgroundColor: !isVideoOn ? "black" : "transparent"
-                }}
-              />
-              <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
-                You
-              </div>
-              <div className="absolute top-2 left-2 flex gap-2">
-                <button 
-                  onClick={toggleMute}
-                  className={`bg-black bg-opacity-50 text-white p-2 rounded-full ${isMuted ? 'bg-red-500' : ''}`}
-                  title={isMuted ? "Unmute microphone" : "Mute microphone"}
-                >
-                  {isMuted ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" clipRule="evenodd" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                    </svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                    </svg>
-                  )}
-                </button>
-                <button 
-                  onClick={toggleVideo}
-                  className={`bg-black bg-opacity-50 text-white p-2 rounded-full ${!isVideoOn ? 'bg-red-500' : ''}`}
-                  title={isVideoOn ? "Turn off camera" : "Turn on camera"}
-                >
-                  {isVideoOn ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            </div>
-            <div className="relative">
-              <video 
-                playsInline 
-                ref={userVideo} 
-                autoPlay 
-                className="w-full rounded-lg border border-gray-300"
-                style={{ 
-                  maxWidth: "200px", 
-                  display: callAccepted ? "block" : "none",
-                  backgroundColor: callAccepted ? "transparent" : "black"
-                }}
-              />
-              {callAccepted && (
-                <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
-                  {registeredUsers.find(u => u.socketId === idToCall)?.customId || "Remote"}
+        {callingStatus && (
+          <Alert className="mb-4">
+            <Icons.phone className="h-4 w-4" />
+            <AlertTitle>{callingStatus}</AlertTitle>
+            <Button variant="ghost" size="sm" onClick={endCall} className="ml-2">
+              <Icons.x className="h-4 w-4" />
+            </Button>
+          </Alert>
+        )}
+
+        <CardContent>
+          {!isRegistered ? (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <h2 className="text-lg font-semibold">Register Your ID</h2>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Enter your display name"
+                    value={customId}
+                    onChange={(e) => setCustomId(e.target.value)}
+                  />
+                  <Button onClick={registerUser}>
+                    <Icons.userPlus className="mr-2 h-4 w-4" />
+                    Register
+                  </Button>
                 </div>
-              )}
+              </div>
             </div>
-          </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div className="relative rounded-lg overflow-hidden bg-muted aspect-video">
+                  <video 
+                    playsInline 
+                    muted
+                    ref={myVideo} 
+                    autoPlay 
+                    className="w-full h-full object-cover"
+                    style={{ 
+                      transform: "scaleX(-1)",
+                      backgroundColor: !isVideoOn ? "black" : "transparent"
+                    }}
+                  />
+                  <div className="absolute bottom-2 left-2 flex gap-2">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button 
+                          variant={isMuted ? "destructive" : "secondary"} 
+                          size="icon" 
+                          onClick={toggleMute}
+                          className="rounded-full w-10 h-10"
+                        >
+                          {isMuted ? (
+                            <Icons.micOff className="h-5 w-5" />
+                          ) : (
+                            <Icons.mic className="h-5 w-5" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {isMuted ? "Unmute" : "Mute"}
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button 
+                          variant={!isVideoOn ? "destructive" : "secondary"} 
+                          size="icon" 
+                          onClick={toggleVideo}
+                          className="rounded-full w-10 h-10"
+                        >
+                          {isVideoOn ? (
+                            <Icons.video className="h-5 w-5" />
+                          ) : (
+                            <Icons.videoOff className="h-5 w-5" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {isVideoOn ? "Turn off camera" : "Turn on camera"}
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Badge variant="secondary" className="absolute top-2 left-2">
+                    You
+                  </Badge>
+                </div>
 
-          <div className="mb-4">
-            <h2 className="text-lg font-semibold mb-2">Available Users</h2>
-            <ul className="max-h-40 overflow-y-auto border rounded p-2">
-              {registeredUsers.filter(u => u.socketId !== me).map(user => {
-                const isInCallWithMe = user.inCallWith === me;
-                const isInCallWithSomeoneElse = user.inCall && !isInCallWithMe;
-                
-                return (
-                  <li 
-                    key={user.socketId} 
-                    className={`p-2 ${isInCallWithSomeoneElse ? 'bg-gray-100 opacity-50' : 'hover:bg-gray-100'} cursor-pointer flex justify-between items-center`}
-                    onClick={() => !isInCallWithSomeoneElse && setIdToCall(user.socketId)}
-                    title={isInCallWithSomeoneElse ? "User is in another call" : ""}
-                  >
-                    <div className="flex items-center">
-                      <span>{user.customId}</span>
-                      {isInCallWithMe && (
-                        <span className="ml-2 text-xs text-green-500">(In call with you)</span>
+                <div className="relative rounded-lg overflow-hidden bg-muted aspect-video">
+                  <video 
+                    playsInline 
+                    ref={userVideo} 
+                    autoPlay 
+                    className="w-full h-full object-cover"
+                    style={{ 
+                      display: callAccepted ? "block" : "none",
+                      backgroundColor: callAccepted ? "transparent" : "black"
+                    }}
+                  />
+                  {callAccepted && (
+                    <Badge variant="secondary" className="absolute top-2 left-2">
+                      {registeredUsers.find(u => u.socketId === idToCall)?.customId || "Remote"}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Card className="md:col-span-1">
+                  <CardHeader className="pb-2">
+                    <h3 className="font-semibold">Available Users</h3>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                      {registeredUsers.filter(u => u.socketId !== me).map(user => {
+                        const isInCallWithMe = user.inCallWith === me;
+                        const isInCallWithSomeoneElse = user.inCall && !isInCallWithMe;
+                        
+                        return (
+                          <div
+                            key={user.socketId} 
+                            onClick={() => !isInCallWithSomeoneElse && setIdToCall(user.socketId)}
+                            className={`p-3 rounded-lg flex items-center justify-between cursor-pointer transition-colors ${
+                              isInCallWithSomeoneElse 
+                                ? 'bg-muted opacity-70' 
+                                : 'hover:bg-accent'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-8 w-8">
+                                <AvatarFallback>
+                                  {user.customId.charAt(0).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <p className="font-medium">{user.customId}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {user.socketId.slice(0, 6)}
+                                </p>
+                              </div>
+                            </div>
+                            {isInCallWithMe && (
+                              <Badge variant="success">In call</Badge>
+                            )}
+                            {isInCallWithSomeoneElse && (
+                              <Badge variant="destructive">Busy</Badge>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="md:col-span-2">
+                  <CardHeader className="pb-2">
+                    <h3 className="font-semibold">Call Controls</h3>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-sm">
+                          Your ID: {customId}
+                        </Badge>
+                        <Badge variant="outline" className="text-sm">
+                          {me.slice(0, 6)}
+                        </Badge>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Enter ID to call"
+                          value={idToCall}
+                          onChange={(e) => setIdToCall(e.target.value)}
+                          disabled={callAccepted || callingStatus !== "" || receivingCall}
+                        />
+                        <Button 
+                          onClick={() => callUser(idToCall)} 
+                          disabled={isCallButtonDisabled()}
+                        >
+                          <Icons.phone className="mr-2 h-4 w-4" />
+                          Call
+                        </Button>
+                      </div>
+
+                      {receivingCall && !callAccepted && (
+                        <div className="space-y-2">
+                          <p className="text-sm">
+                            {registeredUsers.find(u => u.socketId === caller)?.customId || caller.slice(0, 6)} is calling...
+                          </p>
+                          <div className="flex gap-2">
+                            <Button 
+                              onClick={answerCall}
+                              className="flex-1"
+                              variant="success"
+                            >
+                              <Icons.phone className="mr-2 h-4 w-4" />
+                              Answer
+                            </Button>
+                            <Button 
+                              onClick={rejectCall}
+                              className="flex-1"
+                              variant="destructive"
+                            >
+                              <Icons.phoneOff className="mr-2 h-4 w-4" />
+                              Decline
+                            </Button>
+                          </div>
+                        </div>
                       )}
-                      {isInCallWithSomeoneElse && (
-                        <span className="ml-2 text-xs text-red-500">(In call)</span>
+
+                      {callAccepted && (
+                        <Button 
+                          onClick={endCall}
+                          variant="destructive"
+                          className="w-full"
+                        >
+                          <Icons.phoneOff className="mr-2 h-4 w-4" />
+                          End Call
+                        </Button>
                       )}
                     </div>
-                    <span className="text-xs text-gray-500">({user.socketId.slice(0, 6)})</span>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-
-          <div className="mt-4">
-            <p className="mb-2">Your ID: <span className="font-semibold">{customId}</span> <span className="text-xs text-gray-500">({me.slice(0, 6)})</span></p>
-            <div className="flex flex-col space-y-2">
-              <input
-                type="text"
-                placeholder="Enter ID to call"
-                value={idToCall}
-                onChange={(e) => setIdToCall(e.target.value)}
-                className="border p-2 rounded"
-                disabled={callAccepted || callingStatus !== "" || receivingCall}
-              />
-              <div className="flex space-x-2">
-                {!callAccepted && !receivingCall ? (
-                  <button 
-                    onClick={() => callUser(idToCall)} 
-                    className="bg-blue-500 text-white px-4 py-2 rounded flex-1 disabled:bg-blue-300"
-                    disabled={isCallButtonDisabled()}
-                  >
-                    Call
-                  </button>
-                ) : (
-                  <button 
-                    onClick={endCall} 
-                    className="bg-red-500 text-white px-4 py-2 rounded flex-1"
-                  >
-                    End Call
-                  </button>
-                )}
+                  </CardContent>
+                </Card>
               </div>
-            </div>
-          </div>
-
-          {receivingCall && !callAccepted && (
-            <div className="mt-4 p-3 bg-gray-100 rounded">
-              <p className="mb-2">{registeredUsers.find(u => u.socketId === caller)?.customId || caller.slice(0, 6)} is calling...</p>
-              <div className="flex space-x-2">
-                <button 
-                  onClick={answerCall} 
-                  className="bg-green-500 text-white px-4 py-2 rounded flex-1"
-                >
-                  Answer
-                </button>
-                <button 
-                  onClick={rejectCall} 
-                  className="bg-red-500 text-white px-4 py-2 rounded flex-1"
-                >
-                  Decline
-                </button>
-              </div>
-            </div>
+            </>
           )}
-        </>
-      )}
+        </CardContent>
+      </Card>
     </div>
   );
-};
-
-export default VideoCall;
+}
