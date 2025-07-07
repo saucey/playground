@@ -173,6 +173,8 @@ const VideoCall: React.FC = () => {
     }
   };
 
+  const animationFrameRef = useRef<number | null>(null);
+
   const startScreenRecording = async () => {
     try {
       setIsRecording(true);
@@ -261,7 +263,7 @@ const VideoCall: React.FC = () => {
         try {
           ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
           ctx.drawImage(cameraVideo, pipX, pipY, pipWidth, pipHeight);
-          requestAnimationFrame(drawFrame);
+          animationFrameRef.current = requestAnimationFrame(drawFrame);
         } catch (err) {
           console.error("Drawing error:", err);
         }
@@ -274,6 +276,12 @@ const VideoCall: React.FC = () => {
       };
   
       mediaRecorder.onstop = () => {
+        // Cancel animation frame
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+          animationFrameRef.current = null;
+        }
+  
         const blob = new Blob(chunks, { type: options.mimeType });
         const url = URL.createObjectURL(blob);
         setRecordedVideoUrl(url);
@@ -286,7 +294,7 @@ const VideoCall: React.FC = () => {
       };
   
       // Start drawing
-      drawFrame();
+      animationFrameRef.current = requestAnimationFrame(drawFrame);
       
       // Start recording
       mediaRecorder.start(100); // 100ms timeslice
@@ -302,19 +310,39 @@ const VideoCall: React.FC = () => {
       setIsRecording(false);
     }
   };
-
+  
   const stopScreenRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      // Request final data
+      mediaRecorderRef.current.requestData();
+      
+      // Stop the recorder (this will trigger onstop)
       mediaRecorderRef.current.stop();
-      // Only stop the screen tracks, not the camera tracks
-      mediaRecorderRef.current.stream.getTracks()
-        .filter(track => track.kind === 'video' && track.getSettings().displaySurface)
-        .forEach(track => track.stop());
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current);
+      
+      // Stop all tracks from the recording stream
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      
+      // Cancel animation frame if exists
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
       }
+      
+      // Update state immediately
+      setIsRecording(false);
     }
   };
+  
+  // Add cleanup in useEffect
+  useEffect(() => {
+    return () => {
+      // Clean up animation frame on unmount
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      stopScreenRecording();
+    };
+  }, []);
 
   const downloadRecording = () => {
     if (recordedVideoUrl) {
