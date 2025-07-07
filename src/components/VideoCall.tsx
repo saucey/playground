@@ -56,22 +56,29 @@ const VideoCall: React.FC = () => {
   };
 
   const playOutgoingRingtone = () => {
-    if (!outgoingRingtoneRef.current) {
-      outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
-      outgoingRingtoneRef.current.loop = true;
-    }
+    console.log('playing ringtone here');
+    
+    // First ensure any existing instance is cleaned up
+    stopOutgoingRingtone();
   
-    const audio = outgoingRingtoneRef.current;
+    // Create new audio instance
+    outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
+    outgoingRingtoneRef.current.loop = true;
   
-    if (audio.paused) {
-      audio
-        .play()
+    // Store the promise to prevent race conditions
+    const playPromise = outgoingRingtoneRef.current.play();
+  
+    if (playPromise !== undefined) {
+      playPromise
         .then(() => {
           console.log("Outgoing ringtone playing");
         })
         .catch((e) => {
           console.error("Could not play outgoing ringtone:", e);
           setNeedsUserInteraction(true);
+          
+          // Clean up on failure
+          outgoingRingtoneRef.current = null;
         });
     }
   };
@@ -82,6 +89,7 @@ const VideoCall: React.FC = () => {
       console.log("Pausing outgoing ringtone");
       outgoingRingtoneRef.current.pause();
       outgoingRingtoneRef.current.currentTime = 0;
+      outgoingRingtoneRef.current = null;
     }
   };
 
