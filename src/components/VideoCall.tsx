@@ -30,7 +30,6 @@ const VideoCall: React.FC = () => {
   const [isRegistered, setIsRegistered] = useState<boolean>(false);
   const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [receivingCall, setReceivingCall] = useState<boolean>(false);
   const [caller, setCaller] = useState<string>("");
   const [callerSignal, setCallerSignal] = useState<SignalData | null>(null);
@@ -40,8 +39,10 @@ const VideoCall: React.FC = () => {
   const [callingStatus, setCallingStatus] = useState<string>("");
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(true);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
+  const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
@@ -50,6 +51,8 @@ const VideoCall: React.FC = () => {
   const incomingRingtoneHTMLRef = useRef<HTMLAudioElement | null>(null);
   const incomingRingtoneWebRef = useRef<AudioBufferSourceNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const isCallButtonDisabled = () => {
     const targetUser = registeredUsers.find(u => u.socketId === idToCall);
@@ -153,6 +156,7 @@ const VideoCall: React.FC = () => {
     
     stopOutgoingRingtone();
     stopIncomingRingtone();
+    stopScreenRecording();
     
     if (connectionRef.current) {
       connectionRef.current.destroy();
@@ -162,14 +166,85 @@ const VideoCall: React.FC = () => {
     if (userVideo.current) {
       userVideo.current.srcObject = null;
     }
+  };
 
-    // Stop screen sharing when call ends
-    if (isScreenSharing) {
-      stopScreenShare();
+  const startScreenRecording = async () => {
+    try {
+      const cameraStream = stream;
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true
+      });
+
+      const combinedStream = new MediaStream();
+      [cameraStream, screenStream].forEach(s => {
+        s?.getTracks().forEach(track => combinedStream.addTrack(track));
+      });
+
+      const mediaRecorder = new MediaRecorder(combinedStream, {
+        mimeType: 'video/webm'
+      });
+
+      mediaRecorderRef.current = mediaRecorder;
+      setRecordedChunks([]);
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          setRecordedChunks(prev => [...prev, event.data]);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        setRecordedVideoUrl(url);
+        setIsRecording(false);
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+
+      recordingIntervalRef.current = setInterval(() => {
+        if (!callAccepted) {
+          stopScreenRecording();
+        }
+      }, 1000);
+
+    } catch (err) {
+      console.error("Error starting screen recording:", err);
+      setError("Could not start screen recording. Please check permissions.");
     }
   };
 
-  // Initialize media stream
+  const stopScreenRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+      }
+    }
+  };
+
+  const downloadRecording = () => {
+    if (recordedVideoUrl) {
+      const a = document.createElement('a');
+      a.href = recordedVideoUrl;
+      a.download = `video-call-recording-${new Date().toISOString()}.webm`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  };
+
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopScreenRecording();
+    } else {
+      startScreenRecording();
+    }
+  };
+
   useEffect(() => {
     const setupMedia = async () => {
       try {
@@ -203,14 +278,13 @@ const VideoCall: React.FC = () => {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
       }
-      if (screenStream) {
-        screenStream.getTracks().forEach((track) => track.stop());
-      }
       resetCallState();
+      if (recordedVideoUrl) {
+        URL.revokeObjectURL(recordedVideoUrl);
+      }
     };
   }, []);
 
-  // Mobile audio workaround
   useEffect(() => {
     if (receivingCall) {
       const handleUserInteraction = () => {
@@ -248,7 +322,6 @@ const VideoCall: React.FC = () => {
     }
   }, [callAccepted]);
 
-  // Socket event listeners
   useEffect(() => {
     socket.on("connect", () => {
       console.log("Connected with ID:", socket.id);
@@ -327,93 +400,6 @@ const VideoCall: React.FC = () => {
     };
   }, []);
 
-  // Screen sharing functions
-  const startScreenShare = async () => {
-    try {
-      // @ts-ignore - getDisplayMedia might not be in the type definitions
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false
-      });
-
-      setScreenStream(screenStream);
-      setIsScreenSharing(true);
-
-      // Replace the video track in the peer connection
-      if (connectionRef.current) {
-        const videoTracks = screenStream.getVideoTracks();
-        if (videoTracks.length > 0) {
-          // Store the original video track to restore later
-          const originalVideoTrack = stream?.getVideoTracks()[0];
-          
-          // Replace the track
-          connectionRef.current.replaceTrack(
-            connectionRef.current.streams[0].getVideoTracks()[0],
-            videoTracks[0],
-            connectionRef.current.streams[0]
-          );
-
-          // Update the local video element to show the screen share
-          if (myVideo.current) {
-            const newStream = new MediaStream();
-            if (stream) {
-              // Keep the audio track from the original stream
-              const audioTracks = stream.getAudioTracks();
-              if (audioTracks.length > 0) {
-                newStream.addTrack(audioTracks[0]);
-              }
-            }
-            newStream.addTrack(videoTracks[0]);
-            myVideo.current.srcObject = newStream;
-          }
-        }
-      }
-
-      // Handle when user stops screen sharing via browser UI
-      screenStream.getVideoTracks()[0].onended = () => {
-        stopScreenShare();
-      };
-
-    } catch (err) {
-      console.error("Failed to share screen:", err);
-      setError("Could not start screen sharing");
-    }
-  };
-
-  const stopScreenShare = () => {
-    if (screenStream) {
-      screenStream.getTracks().forEach(track => track.stop());
-      setScreenStream(null);
-      setIsScreenSharing(false);
-
-      // Restore the camera video track
-      if (connectionRef.current && stream) {
-        const videoTracks = stream.getVideoTracks();
-        if (videoTracks.length > 0) {
-          connectionRef.current.replaceTrack(
-            connectionRef.current.streams[0].getVideoTracks()[0],
-            videoTracks[0],
-            connectionRef.current.streams[0]
-          );
-        }
-      }
-
-      // Restore the local video element
-      if (myVideo.current && stream) {
-        myVideo.current.srcObject = stream;
-      }
-    }
-  };
-
-  const toggleScreenShare = () => {
-    if (isScreenSharing) {
-      stopScreenShare();
-    } else {
-      startScreenShare();
-    }
-  };
-
-  // Media control functions
   const toggleMute = () => {
     if (stream) {
       const audioTracks = stream.getAudioTracks();
@@ -476,7 +462,6 @@ const VideoCall: React.FC = () => {
     }
   };
 
-  // User registration
   const registerUser = () => {
     if (!customId.trim()) {
       setError("Please enter a custom ID");
@@ -486,7 +471,6 @@ const VideoCall: React.FC = () => {
     socket.emit("register", customId);
   };
 
-  // Call management
   const callUser = (id: string) => {
     resetCallState();
   
@@ -598,6 +582,7 @@ const VideoCall: React.FC = () => {
   };
 
   const endCall = () => {
+    stopScreenRecording();
     socket.emit("end-call");
     resetCallState();
   };
@@ -652,12 +637,12 @@ const VideoCall: React.FC = () => {
                 style={{ 
                   maxWidth: "200px",
                   display: "block",
-                  transform: isScreenSharing ? "scaleX(1)" : "scaleX(-1)",
-                  backgroundColor: (!isVideoOn && !isScreenSharing) ? "black" : "transparent"
+                  transform: "scaleX(-1)",
+                  backgroundColor: !isVideoOn ? "black" : "transparent"
                 }}
               />
               <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
-                {isScreenSharing ? "Your Screen" : "You"}
+                You
               </div>
               <div className="absolute top-2 left-2 flex gap-2">
                 <button 
@@ -692,18 +677,27 @@ const VideoCall: React.FC = () => {
                     </svg>
                   )}
                 </button>
-                {callAccepted && (
-                  <button 
-                    onClick={toggleScreenShare}
-                    className={`bg-black bg-opacity-50 text-white p-2 rounded-full ${isScreenSharing ? 'bg-blue-500' : ''}`}
-                    title={isScreenSharing ? "Stop screen sharing" : "Share screen"}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                    </svg>
-                  </button>
-                )}
               </div>
+              {callAccepted && (
+                <div className="absolute top-2 right-2">
+                  <button 
+                    onClick={toggleRecording}
+                    className={`bg-black bg-opacity-50 text-white p-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : ''}`}
+                    title={isRecording ? "Stop recording" : "Start recording"}
+                  >
+                    {isRecording ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                      </svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
             <div className="relative">
               <video 
@@ -816,6 +810,25 @@ const VideoCall: React.FC = () => {
                   className="bg-red-500 text-white px-4 py-2 rounded flex-1"
                 >
                   Decline
+                </button>
+              </div>
+            </div>
+          )}
+
+          {recordedVideoUrl && (
+            <div className="mt-4 p-3 bg-gray-100 rounded">
+              <h3 className="font-semibold mb-2">Call Recording</h3>
+              <video 
+                controls 
+                src={recordedVideoUrl} 
+                className="w-full rounded mb-2"
+              />
+              <div className="flex justify-end">
+                <button 
+                  onClick={downloadRecording}
+                  className="bg-blue-500 text-white px-4 py-2 rounded"
+                >
+                  Download Recording
                 </button>
               </div>
             </div>
