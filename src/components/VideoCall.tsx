@@ -56,40 +56,18 @@ const VideoCall: React.FC = () => {
   };
 
   const playOutgoingRingtone = () => {
-    console.log('playing ringtone here');
-    
-    // First ensure any existing instance is cleaned up
-    stopOutgoingRingtone();
-  
-    // Create new audio instance
     outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
     outgoingRingtoneRef.current.loop = true;
-  
-    // Store the promise to prevent race conditions
-    const playPromise = outgoingRingtoneRef.current.play();
-  
-    if (playPromise !== undefined) {
-      playPromise
-        .then(() => {
-          console.log("Outgoing ringtone playing");
-        })
-        .catch((e) => {
-          console.error("Could not play outgoing ringtone:", e);
-          setNeedsUserInteraction(true);
-          
-          // Clean up on failure
-          outgoingRingtoneRef.current = null;
-        });
-    }
+    outgoingRingtoneRef.current.muted = true;
+    outgoingRingtoneRef.current.play().then(() => {
+      outgoingRingtoneRef.current.muted = false;
+    });
   };
-  
   
   const stopOutgoingRingtone = () => {
     if (outgoingRingtoneRef.current) {
-      console.log("Pausing outgoing ringtone");
       outgoingRingtoneRef.current.pause();
       outgoingRingtoneRef.current.currentTime = 0;
-      outgoingRingtoneRef.current = null;
     }
   };
 
