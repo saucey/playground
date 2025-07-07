@@ -45,7 +45,8 @@ const VideoCall: React.FC = () => {
   const userVideo = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<Peer.Instance | null>(null);
   const outgoingRingtoneRef = useRef<HTMLAudioElement | null>(null);
-  const incomingRingtoneRef = useRef<HTMLAudioElement | null>(null);
+  const incomingRingtoneHTMLRef = useRef<HTMLAudioElement | null>(null);
+  const incomingRingtoneWebRef = useRef<AudioBufferSourceNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
   const isCallButtonDisabled = () => {
@@ -73,63 +74,64 @@ const VideoCall: React.FC = () => {
   };
 
   const playIncomingRingtone = () => {
-    // Try Web Audio API first for better mobile support
+    stopIncomingRingtone(); // <-- Add this to prevent stacking
+  
     if (typeof window !== 'undefined' && window.AudioContext) {
       if (!audioContextRef.current) {
         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
-      
+  
       fetch(RINGTONE_INCOMING)
-        .then(response => response.arrayBuffer())
-        .then(arrayBuffer => audioContextRef.current?.decodeAudioData(arrayBuffer))
-        .then(audioBuffer => {
-          const source = audioContextRef.current?.createBufferSource();
-          if (source) {
-            source.buffer = audioBuffer;
-            source.loop = true;
-            source.connect(audioContextRef.current.destination);
-            source.start();
-            incomingRingtoneRef.current = source as any;
-          }
+        .then(res => res.arrayBuffer())
+        .then(buffer => audioContextRef.current!.decodeAudioData(buffer))
+        .then(decodedBuffer => {
+          const source = audioContextRef.current!.createBufferSource();
+          source.buffer = decodedBuffer;
+          source.loop = true;
+          source.connect(audioContextRef.current!.destination);
+          source.start(0);
+  
+          incomingRingtoneWebRef.current = source;
         })
-        .catch(() => {
-          // Fallback to HTML5 Audio
-          if (!incomingRingtoneRef.current) {
-            incomingRingtoneRef.current = new Audio(RINGTONE_INCOMING);
-            incomingRingtoneRef.current.loop = true;
+        .catch(err => {
+          console.warn("Web Audio failed, using HTML Audio fallback", err);
+          if (!incomingRingtoneHTMLRef.current) {
+            incomingRingtoneHTMLRef.current = new Audio(RINGTONE_INCOMING);
+            incomingRingtoneHTMLRef.current.loop = true;
           }
-          incomingRingtoneRef.current.play().catch(e => {
-            console.error("Couldn't play incoming ringtone:", e);
+          incomingRingtoneHTMLRef.current.play().catch(e => {
+            console.error("Fallback HTML5 audio failed:", e);
             setNeedsUserInteraction(true);
           });
         });
-    } else {
-      // Fallback to HTML5 Audio
-      if (!incomingRingtoneRef.current) {
-        incomingRingtoneRef.current = new Audio(RINGTONE_INCOMING);
-        incomingRingtoneRef.current.loop = true;
-      }
-      incomingRingtoneRef.current.play().catch(e => {
-        console.error("Couldn't play incoming ringtone:", e);
-        setNeedsUserInteraction(true);
-      });
     }
   };
+  
+  
 
   const stopIncomingRingtone = () => {
-    if (incomingRingtoneRef.current) {
-      if (incomingRingtoneRef.current instanceof AudioBufferSourceNode) {
-        // Web Audio API source
-        incomingRingtoneRef.current.stop();
-      } else {
-        // HTML5 Audio
-        (incomingRingtoneRef.current as HTMLAudioElement).pause();
-        (incomingRingtoneRef.current as HTMLAudioElement).currentTime = 0;
+    // Stop Web Audio version
+    if (incomingRingtoneWebRef.current) {
+      try {
+        incomingRingtoneWebRef.current.stop();
+      } catch (e) {
+        console.error("Error stopping web audio ringtone:", e);
       }
-      incomingRingtoneRef.current = null;
+      incomingRingtoneWebRef.current.disconnect();
+      incomingRingtoneWebRef.current = null;
+    }
+  
+    // Stop HTML Audio fallback
+    if (incomingRingtoneHTMLRef.current) {
+      try {
+        incomingRingtoneHTMLRef.current.pause();
+        incomingRingtoneHTMLRef.current.currentTime = 0;
+      } catch (e) {
+        console.error("Error stopping HTML ringtone:", e);
+      }
+      incomingRingtoneHTMLRef.current = null;
     }
   };
-
   const resetCallState = () => {
     setCallAccepted(false);
     setReceivingCall(false);
@@ -379,6 +381,7 @@ const VideoCall: React.FC = () => {
 
   // Call management
   const callUser = (id: string) => {
+    playOutgoingRingtone();
     if (!stream) {
       setError("No local stream available");
       return;
@@ -387,7 +390,6 @@ const VideoCall: React.FC = () => {
     resetCallState();
     const targetUser = registeredUsers.find(u => u.socketId === id);
     setCallingStatus(`Calling ${targetUser?.customId || id.slice(0, 6)}...`);
-    playOutgoingRingtone();
     
     const peer = new Peer({
       initiator: true,
@@ -433,46 +435,50 @@ const VideoCall: React.FC = () => {
   };
 
   const answerCall = () => {
+    // Prevent ringtone from restarting
+    setReceivingCall(false);
+    stopIncomingRingtone();
+  
     if (!stream || !callerSignal) {
       setError("Cannot answer call: missing stream or signal");
       return;
     }
-
-    stopIncomingRingtone();
+  
     const peer = new Peer({
       initiator: false,
       trickle: false,
       stream: stream,
     });
-
+  
     peer.on("signal", (data: SignalData) => {
       socket.emit("answer-call", { signal: data, to: caller });
     });
-
+  
     peer.on("stream", (currentStream: MediaStream) => {
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
         userVideo.current.play().catch(e => console.error("Remote video play error:", e));
       }
     });
-
+  
     peer.on("connect", () => {
       setCallAccepted(true);
     });
-
+  
     peer.on("error", (err) => {
       console.error("Peer error:", err);
       setError("Call connection failed");
       resetCallState();
     });
-
+  
     peer.on("close", () => {
       resetCallState();
     });
-
+  
     peer.signal(callerSignal);
     connectionRef.current = peer;
   };
+  
 
   const rejectCall = () => {
     socket.emit("reject-call", { to: caller });
