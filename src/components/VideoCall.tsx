@@ -151,8 +151,8 @@ const VideoCall: React.FC = () => {
     setCallerSignal(null);
     setNeedsUserInteraction(false);
     
-    stopOutgoingRingtone();
-    stopIncomingRingtone();
+    // stopOutgoingRingtone();
+    // stopIncomingRingtone();
     
     if (connectionRef.current) {
       connectionRef.current.destroy();
