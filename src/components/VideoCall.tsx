@@ -14,8 +14,8 @@ const socket: Socket = io("wss://video-call.devonauts.co.uk", {
 });
 
 // Ringtone audio files (you might want to host these or use base64 encoded audio)
-const RINGTONE_OUTGOING = "https://assets.mixkit.co/sfx/preview/mixkit-calling-phone-2760.mp3";
-const RINGTONE_INCOMING = "https://assets.mixkit.co/sfx/preview/mixkit-phone-ring-1930.mp3";
+const RINGTONE_OUTGOING = "/mixkit-happy-bells-notification-937.mp3";
+const RINGTONE_INCOMING = "/mixkit-happy-bells-notification-937.mp3";
 
 interface RegisteredUser {
   socketId: string;
