@@ -303,15 +303,18 @@ const VideoCall: React.FC = () => {
     }
   };
 
-const stopScreenRecording = () => {
-  if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-    // Request final data chunk
-    mediaRecorderRef.current.requestData();
-    
-    // Stop the recorder (this will trigger onstop)
-    mediaRecorderRef.current.stop();
-  }
-};
+  const stopScreenRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      // Only stop the screen tracks, not the camera tracks
+      mediaRecorderRef.current.stream.getTracks()
+        .filter(track => track.kind === 'video' && track.getSettings().displaySurface)
+        .forEach(track => track.stop());
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+      }
+    }
+  };
 
   const downloadRecording = () => {
     if (recordedVideoUrl) {
