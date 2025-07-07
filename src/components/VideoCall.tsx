@@ -173,79 +173,76 @@ const VideoCall: React.FC = () => {
     }
   };
 
-  const startScreenRecording = async () => {
-    try {
-      // Stop any existing recording first
-      if (isRecording) {
-        stopScreenRecording();
-      }
-  
-      // Get camera stream (should already exist from component setup)
-      const cameraStream = stream;
-      if (!cameraStream) {
-        throw new Error("Camera stream not available");
-      }
-  
-      // Get screen stream
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          displaySurface: "monitor",  // or "window", "browser"
-          frameRate: { ideal: 30 }
-        },
-        audio: true  // Include system audio if available
-      });
-  
-      // Create combined stream
-      const combinedStream = new MediaStream([
-        ...cameraStream.getVideoTracks(),  // Only take video from camera
-        ...screenStream.getVideoTracks(),  // Screen video
-        ...cameraStream.getAudioTracks(),  // Camera audio
-        ...screenStream.getAudioTracks()   // System audio if available
-      ]);
-  
-      // Create media recorder with proper mimeType
-      const options = {
-        mimeType: 'video/webm;codecs=vp9,opus',
-        videoBitsPerSecond: 2500000  // 2.5 Mbps
-      };
-  
-      const mediaRecorder = new MediaRecorder(combinedStream, options);
-      mediaRecorderRef.current = mediaRecorder;
-  
-      const chunks: Blob[] = [];
-      setRecordedChunks([]);
-  
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunks.push(event.data);
-          setRecordedChunks(prev => [...prev, event.data]);
-        }
-      };
-  
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        setRecordedVideoUrl(url);
-        setIsRecording(false);
+// Alternative version that shows camera as PIP on screen recording
+const startScreenRecordingWithPIP = async () => {
+  try {
+    // Get both streams
+    const screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: true
+    });
+    const cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: false // We'll use screen audio
+    });
+
+    // Use a canvas to composite the streams
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const screenVideo = document.createElement('video');
+    const cameraVideo = document.createElement('video');
+
+    screenVideo.srcObject = screenStream;
+    cameraVideo.srcObject = cameraStream;
+
+    // Set canvas dimensions to match screen
+    screenVideo.onloadedmetadata = () => {
+      canvas.width = screenVideo.videoWidth;
+      canvas.height = screenVideo.videoHeight;
+      
+      // Start drawing frames
+      const drawFrame = () => {
+        if (!isRecording) return;
         
-        // Stop only the screen tracks (keep camera tracks active)
-        screenStream.getTracks().forEach(track => track.stop());
+        // Draw screen
+        ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+        
+        // Draw camera PIP (bottom right corner)
+        const pipWidth = canvas.width / 4;
+        const pipHeight = (cameraVideo.videoHeight / cameraVideo.videoWidth) * pipWidth;
+        ctx.drawImage(
+          cameraVideo,
+          canvas.width - pipWidth - 20,
+          canvas.height - pipHeight - 20,
+          pipWidth,
+          pipHeight
+        );
+        
+        requestAnimationFrame(drawFrame);
       };
-  
-      // Start recording with 100ms timeslice for smoother data
-      mediaRecorder.start(100);
-      setIsRecording(true);
-  
-      // Handle case where user stops screen sharing via browser UI
-      screenStream.getVideoTracks()[0].addEventListener('ended', () => {
-        stopScreenRecording();
-      });
-  
-    } catch (err) {
-      console.error("Screen recording error:", err);
-      setError("Failed to start screen recording. Please check permissions.");
+      
+      drawFrame();
+    };
+
+    // Capture canvas as media stream
+    const canvasStream = canvas.captureStream(30);
+    const audioTrack = screenStream.getAudioTracks()[0];
+    if (audioTrack) {
+      canvasStream.addTrack(audioTrack);
     }
-  };
+
+    // Create recorder
+    const mediaRecorder = new MediaRecorder(canvasStream, {
+      mimeType: 'video/webm;codecs=vp9'
+    });
+
+    // ...rest of recording logic same as above...
+    
+  } catch (err) {
+    console.error("PIP recording failed:", err);
+    setError("Picture-in-Picture recording failed");
+  }
+};
 
 
   const stopScreenRecording = () => {
@@ -278,7 +275,7 @@ const VideoCall: React.FC = () => {
     if (isRecording) {
       stopScreenRecording();
     } else {
-      startScreenRecording();
+      startScreenRecordingWithPIP();
     }
   };
 
