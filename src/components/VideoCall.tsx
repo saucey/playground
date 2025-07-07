@@ -79,6 +79,7 @@ const VideoCall: React.FC = () => {
   
   const stopOutgoingRingtone = () => {
     if (outgoingRingtoneRef.current) {
+      console.log("Pausing outgoing ringtone");
       outgoingRingtoneRef.current.pause();
       outgoingRingtoneRef.current.currentTime = 0;
     }
