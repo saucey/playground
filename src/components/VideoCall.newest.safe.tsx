@@ -13,6 +13,10 @@ const socket: Socket = io("wss://video-call.devonauts.co.uk", {
   reconnectionDelay: 1000,
 });
 
+// Ringtone audio files
+const RINGTONE_OUTGOING = "/mixkit-happy-bells-notification-937.mp3";
+const RINGTONE_INCOMING = "/mixkit-happy-bells-notification-937.mp3";
+
 interface RegisteredUser {
   socketId: string;
   customId: string;
@@ -35,10 +39,15 @@ const VideoCall: React.FC = () => {
   const [callingStatus, setCallingStatus] = useState<string>("");
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(true);
+  const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<Peer.Instance | null>(null);
+  const outgoingRingtoneRef = useRef<HTMLAudioElement | null>(null);
+  const incomingRingtoneHTMLRef = useRef<HTMLAudioElement | null>(null);
+  const incomingRingtoneWebRef = useRef<AudioBufferSourceNode | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   const isCallButtonDisabled = () => {
     const targetUser = registeredUsers.find(u => u.socketId === idToCall);
@@ -46,12 +55,102 @@ const VideoCall: React.FC = () => {
            (targetUser?.inCall && targetUser.inCallWith !== me);
   };
 
+  const playOutgoingRingtone = () => {
+    if (!outgoingRingtoneRef.current) {
+      outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
+      outgoingRingtoneRef.current.loop = true;
+    }
+  
+    // Defensive: Stop if somehow already playing
+    stopOutgoingRingtone();
+  
+    outgoingRingtoneRef.current
+      .play()
+      .then(() => {
+        console.log("Outgoing ringtone playing");
+      })
+      .catch((e) => {
+        console.error("Could not play outgoing ringtone:", e);
+        setNeedsUserInteraction(true);
+      });
+  };
+  
+  const stopOutgoingRingtone = () => {
+    if (outgoingRingtoneRef.current) {
+      outgoingRingtoneRef.current.pause();
+      outgoingRingtoneRef.current.currentTime = 0;
+    }
+  };
+
+  const playIncomingRingtone = () => {
+    stopIncomingRingtone(); // <-- Add this to prevent stacking
+  
+    if (typeof window !== 'undefined' && window.AudioContext) {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+  
+      fetch(RINGTONE_INCOMING)
+        .then(res => res.arrayBuffer())
+        .then(buffer => audioContextRef.current!.decodeAudioData(buffer))
+        .then(decodedBuffer => {
+          const source = audioContextRef.current!.createBufferSource();
+          source.buffer = decodedBuffer;
+          source.loop = true;
+          source.connect(audioContextRef.current!.destination);
+          source.start(0);
+  
+          incomingRingtoneWebRef.current = source;
+        })
+        .catch(err => {
+          console.warn("Web Audio failed, using HTML Audio fallback", err);
+          if (!incomingRingtoneHTMLRef.current) {
+            incomingRingtoneHTMLRef.current = new Audio(RINGTONE_INCOMING);
+            incomingRingtoneHTMLRef.current.loop = true;
+          }
+          incomingRingtoneHTMLRef.current.play().catch(e => {
+            console.error("Fallback HTML5 audio failed:", e);
+            setNeedsUserInteraction(true);
+          });
+        });
+    }
+  };
+  
+  
+
+  const stopIncomingRingtone = () => {
+    // Stop Web Audio version
+    if (incomingRingtoneWebRef.current) {
+      try {
+        incomingRingtoneWebRef.current.stop();
+      } catch (e) {
+        console.error("Error stopping web audio ringtone:", e);
+      }
+      incomingRingtoneWebRef.current.disconnect();
+      incomingRingtoneWebRef.current = null;
+    }
+  
+    // Stop HTML Audio fallback
+    if (incomingRingtoneHTMLRef.current) {
+      try {
+        incomingRingtoneHTMLRef.current.pause();
+        incomingRingtoneHTMLRef.current.currentTime = 0;
+      } catch (e) {
+        console.error("Error stopping HTML ringtone:", e);
+      }
+      incomingRingtoneHTMLRef.current = null;
+    }
+  };
   const resetCallState = () => {
     setCallAccepted(false);
     setReceivingCall(false);
     setCallingStatus("");
     setCaller("");
     setCallerSignal(null);
+    setNeedsUserInteraction(false);
+    
+    stopOutgoingRingtone();
+    stopIncomingRingtone();
     
     if (connectionRef.current) {
       connectionRef.current.destroy();
@@ -97,20 +196,44 @@ const VideoCall: React.FC = () => {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
       }
+      resetCallState();
     };
   }, []);
 
   // Mobile audio workaround
   useEffect(() => {
+    if (receivingCall) {
+      const handleUserInteraction = () => {
+        playIncomingRingtone();
+        document.removeEventListener('click', handleUserInteraction);
+        document.removeEventListener('touchstart', handleUserInteraction);
+      };
+
+      document.addEventListener('click', handleUserInteraction);
+      document.addEventListener('touchstart', handleUserInteraction);
+
+      return () => {
+        document.removeEventListener('click', handleUserInteraction);
+        document.removeEventListener('touchstart', handleUserInteraction);
+      };
+    }
+  }, [receivingCall]);
+
+  useEffect(() => {
     if (callAccepted && typeof window !== 'undefined') {
-      const audioElement = document.createElement('audio');
-      audioElement.autoplay = true;
-      audioElement.muted = false;
-      audioElement.volume = 0.01;
-      document.body.appendChild(audioElement);
+      const handleUserInteraction = () => {
+        if (userVideo.current) {
+          userVideo.current.muted = false;
+          userVideo.current.play().catch(e => console.log("Play attempt failed:", e));
+        }
+      };
+      
+      document.addEventListener('click', handleUserInteraction);
+      document.addEventListener('touchstart', handleUserInteraction);
       
       return () => {
-        document.body.removeChild(audioElement);
+        document.removeEventListener('click', handleUserInteraction);
+        document.removeEventListener('touchstart', handleUserInteraction);
       };
     }
   }, [callAccepted]);
@@ -150,12 +273,14 @@ const VideoCall: React.FC = () => {
         setCaller(from);
         setCallerSignal(signal);
         setError(`${callerCustomId} is calling you...`);
+        playIncomingRingtone();
       }
     });
 
     socket.on("call-answered", (signal: SignalData) => {
       setCallAccepted(true);
       setCallingStatus("");
+      stopOutgoingRingtone();
       if (connectionRef.current) {
         connectionRef.current.signal(signal);
       }
@@ -163,6 +288,7 @@ const VideoCall: React.FC = () => {
 
     socket.on("call-rejected", () => {
       setCallingStatus("Call was rejected");
+      stopOutgoingRingtone();
       setTimeout(() => resetCallState(), 2000);
     });
 
@@ -264,13 +390,15 @@ const VideoCall: React.FC = () => {
 
   // Call management
   const callUser = (id: string) => {
+    playOutgoingRingtone();
     if (!stream) {
       setError("No local stream available");
       return;
     }
 
     resetCallState();
-    setCallingStatus(`Calling ${registeredUsers.find(u => u.socketId === id)?.customId || id.slice(0, 6)}...`);
+    const targetUser = registeredUsers.find(u => u.socketId === id);
+    setCallingStatus(`Calling ${targetUser?.customId || id.slice(0, 6)}...`);
     
     const peer = new Peer({
       initiator: true,
@@ -297,12 +425,14 @@ const VideoCall: React.FC = () => {
     peer.on("connect", () => {
       setCallAccepted(true);
       setCallingStatus("");
+      stopOutgoingRingtone();
     });
 
     peer.on("error", (err) => {
       console.error("Peer error:", err);
       setError("Call connection failed");
       setCallingStatus("Call failed");
+      stopOutgoingRingtone();
       setTimeout(() => resetCallState(), 2000);
     });
 
@@ -314,48 +444,54 @@ const VideoCall: React.FC = () => {
   };
 
   const answerCall = () => {
+    // Prevent ringtone from restarting
+    setReceivingCall(false);
+    stopIncomingRingtone();
+  
     if (!stream || !callerSignal) {
       setError("Cannot answer call: missing stream or signal");
       return;
     }
-
+  
     const peer = new Peer({
       initiator: false,
       trickle: false,
       stream: stream,
     });
-
+  
     peer.on("signal", (data: SignalData) => {
       socket.emit("answer-call", { signal: data, to: caller });
     });
-
+  
     peer.on("stream", (currentStream: MediaStream) => {
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
         userVideo.current.play().catch(e => console.error("Remote video play error:", e));
       }
     });
-
+  
     peer.on("connect", () => {
       setCallAccepted(true);
     });
-
+  
     peer.on("error", (err) => {
       console.error("Peer error:", err);
       setError("Call connection failed");
       resetCallState();
     });
-
+  
     peer.on("close", () => {
       resetCallState();
     });
-
+  
     peer.signal(callerSignal);
     connectionRef.current = peer;
   };
+  
 
   const rejectCall = () => {
     socket.emit("reject-call", { to: caller });
+    stopIncomingRingtone();
     resetCallState();
   };
 
@@ -541,6 +677,20 @@ const VideoCall: React.FC = () => {
           {receivingCall && !callAccepted && (
             <div className="mt-4 p-3 bg-gray-100 rounded">
               <p className="mb-2">{registeredUsers.find(u => u.socketId === caller)?.customId || caller.slice(0, 6)} is calling...</p>
+              {needsUserInteraction && (
+                <div className="mb-2 p-2 bg-yellow-100 rounded">
+                  <p className="text-sm">Tap the button below to enable call audio:</p>
+                  <button 
+                    onClick={() => {
+                      playIncomingRingtone();
+                      setNeedsUserInteraction(false);
+                    }}
+                    className="bg-blue-500 text-white px-4 py-2 rounded mt-2 w-full"
+                  >
+                    Enable Sound
+                  </button>
+                </div>
+              )}
               <div className="flex space-x-2">
                 <button 
                   onClick={answerCall} 
