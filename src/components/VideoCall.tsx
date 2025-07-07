@@ -174,91 +174,133 @@ const VideoCall: React.FC = () => {
   };
 
 // Alternative version that shows camera as PIP on screen recording
-const startScreenRecordingWithPIP = async () => {
+const startScreenRecording = async () => {
   try {
-    // Get both streams
+    // Stop any existing recording first
+    if (isRecording) {
+      stopScreenRecording();
+      return;
+    }
+
+    // Get screen stream
     const screenStream = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
-      audio: true
-    });
-    const cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: false // We'll use screen audio
+      video: {
+        displaySurface: 'monitor', // or 'window', 'browser'
+        frameRate: { ideal: 30 }
+      },
+      audio: true // Include system audio if available
     });
 
-    // Use a canvas to composite the streams
+    // Get camera stream (should already exist from component setup)
+    const cameraStream = stream;
+    if (!cameraStream) {
+      throw new Error("Camera stream not available");
+    }
+
+    // Create canvas for compositing
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error("Could not get canvas context");
+
+    // Create video elements for the streams
     const screenVideo = document.createElement('video');
     const cameraVideo = document.createElement('video');
-
     screenVideo.srcObject = screenStream;
     cameraVideo.srcObject = cameraStream;
 
+    // Wait for both videos to be ready
+    await Promise.all([
+      new Promise((resolve) => { screenVideo.onloadedmetadata = resolve; }),
+      new Promise((resolve) => { cameraVideo.onloadedmetadata = resolve; })
+    ]);
+
     // Set canvas dimensions to match screen
-    screenVideo.onloadedmetadata = () => {
-      canvas.width = screenVideo.videoWidth;
-      canvas.height = screenVideo.videoHeight;
+    canvas.width = screenVideo.videoWidth;
+    canvas.height = screenVideo.videoHeight;
+
+    // Calculate PIP size and position
+    const pipWidth = canvas.width / 4;
+    const pipHeight = (cameraVideo.videoHeight / cameraVideo.videoWidth) * pipWidth;
+    const pipX = canvas.width - pipWidth - 20;
+    const pipY = canvas.height - pipHeight - 20;
+
+    // Start drawing frames
+    const drawFrame = () => {
+      if (!isRecording) return;
       
-      // Start drawing frames
-      const drawFrame = () => {
-        if (!isRecording) return;
-        
-        // Draw screen
-        ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
-        
-        // Draw camera PIP (bottom right corner)
-        const pipWidth = canvas.width / 4;
-        const pipHeight = (cameraVideo.videoHeight / cameraVideo.videoWidth) * pipWidth;
-        ctx.drawImage(
-          cameraVideo,
-          canvas.width - pipWidth - 20,
-          canvas.height - pipHeight - 20,
-          pipWidth,
-          pipHeight
-        );
-        
-        requestAnimationFrame(drawFrame);
-      };
+      // Draw screen
+      ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
       
-      drawFrame();
+      // Draw camera PIP
+      ctx.drawImage(cameraVideo, pipX, pipY, pipWidth, pipHeight);
+      
+      requestAnimationFrame(drawFrame);
     };
 
-    // Capture canvas as media stream
+    // Create media stream from canvas
     const canvasStream = canvas.captureStream(30);
-    const audioTrack = screenStream.getAudioTracks()[0];
-    if (audioTrack) {
-      canvasStream.addTrack(audioTrack);
+    
+    // Add audio from screen stream if available
+    const audioTracks = screenStream.getAudioTracks();
+    if (audioTracks.length > 0) {
+      canvasStream.addTrack(audioTracks[0]);
     }
 
-    // Create recorder
+    // Create media recorder
     const mediaRecorder = new MediaRecorder(canvasStream, {
-      mimeType: 'video/webm;codecs=vp9'
+      mimeType: 'video/webm;codecs=vp9,opus',
+      videoBitsPerSecond: 2500000 // 2.5 Mbps
     });
 
-    // ...rest of recording logic same as above...
+    mediaRecorderRef.current = mediaRecorder;
+    const chunks: Blob[] = [];
+    setRecordedChunks([]);
+
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        chunks.push(event.data);
+      }
+    };
+
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      setRecordedVideoUrl(url);
+      setIsRecording(false);
+      
+      // Stop only the screen tracks (keep camera tracks active)
+      screenStream.getTracks().forEach(track => track.stop());
+    };
+
+    // Start drawing frames
+    drawFrame();
     
+    // Start recording with 100ms timeslice
+    mediaRecorder.start(100);
+    setIsRecording(true);
+
+    // Handle when user stops sharing via browser UI
+    screenStream.getVideoTracks()[0].onended = () => {
+      stopScreenRecording();
+    };
+
   } catch (err) {
-    console.error("PIP recording failed:", err);
-    setError("Picture-in-Picture recording failed");
+    console.error("Screen recording error:", err);
+    setError("Failed to start screen recording. Please check permissions.");
+    setIsRecording(false);
   }
 };
 
 
-  const stopScreenRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      // Request final data chunk
-      mediaRecorderRef.current.requestData();
-      
-      // Stop the recorder (this will trigger onstop)
-      mediaRecorderRef.current.stop();
-      
-      // Clear interval if exists
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current);
-      }
-    }
-  };
+const stopScreenRecording = () => {
+  if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+    // Request final data chunk
+    mediaRecorderRef.current.requestData();
+    
+    // Stop the recorder (this will trigger onstop)
+    mediaRecorderRef.current.stop();
+  }
+};
 
   const downloadRecording = () => {
     if (recordedVideoUrl) {
@@ -275,7 +317,12 @@ const startScreenRecordingWithPIP = async () => {
     if (isRecording) {
       stopScreenRecording();
     } else {
-      startScreenRecordingWithPIP();
+      // Clean up previous recording
+      if (recordedVideoUrl) {
+        URL.revokeObjectURL(recordedVideoUrl);
+        setRecordedVideoUrl(null);
+      }
+      startScreenRecording();
     }
   };
 
