@@ -13,6 +13,10 @@ const socket: Socket = io("wss://video-call.devonauts.co.uk", {
   reconnectionDelay: 1000,
 });
 
+// Ringtone audio files (you might want to host these or use base64 encoded audio)
+const RINGTONE_OUTGOING = "https://assets.mixkit.co/sfx/preview/mixkit-calling-phone-2760.mp3";
+const RINGTONE_INCOMING = "https://assets.mixkit.co/sfx/preview/mixkit-phone-ring-1930.mp3";
+
 interface RegisteredUser {
   socketId: string;
   customId: string;
@@ -39,11 +43,43 @@ const VideoCall: React.FC = () => {
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<Peer.Instance | null>(null);
+  const outgoingRingtoneRef = useRef<HTMLAudioElement | null>(null);
+  const incomingRingtoneRef = useRef<HTMLAudioElement | null>(null);
 
   const isCallButtonDisabled = () => {
     const targetUser = registeredUsers.find(u => u.socketId === idToCall);
     return !me || !idToCall || callAccepted || callingStatus !== "" || receivingCall || 
            (targetUser?.inCall && targetUser.inCallWith !== me);
+  };
+
+  const playOutgoingRingtone = () => {
+    if (!outgoingRingtoneRef.current) {
+      outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
+      outgoingRingtoneRef.current.loop = true;
+    }
+    outgoingRingtoneRef.current.play().catch(e => console.error("Couldn't play outgoing ringtone:", e));
+  };
+
+  const stopOutgoingRingtone = () => {
+    if (outgoingRingtoneRef.current) {
+      outgoingRingtoneRef.current.pause();
+      outgoingRingtoneRef.current.currentTime = 0;
+    }
+  };
+
+  const playIncomingRingtone = () => {
+    if (!incomingRingtoneRef.current) {
+      incomingRingtoneRef.current = new Audio(RINGTONE_INCOMING);
+      incomingRingtoneRef.current.loop = true;
+    }
+    incomingRingtoneRef.current.play().catch(e => console.error("Couldn't play incoming ringtone:", e));
+  };
+
+  const stopIncomingRingtone = () => {
+    if (incomingRingtoneRef.current) {
+      incomingRingtoneRef.current.pause();
+      incomingRingtoneRef.current.currentTime = 0;
+    }
   };
 
   const resetCallState = () => {
@@ -52,6 +88,9 @@ const VideoCall: React.FC = () => {
     setCallingStatus("");
     setCaller("");
     setCallerSignal(null);
+    
+    stopOutgoingRingtone();
+    stopIncomingRingtone();
     
     if (connectionRef.current) {
       connectionRef.current.destroy();
@@ -97,6 +136,8 @@ const VideoCall: React.FC = () => {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
       }
+      stopOutgoingRingtone();
+      stopIncomingRingtone();
     };
   }, []);
 
@@ -150,12 +191,14 @@ const VideoCall: React.FC = () => {
         setCaller(from);
         setCallerSignal(signal);
         setError(`${callerCustomId} is calling you...`);
+        playIncomingRingtone();
       }
     });
 
     socket.on("call-answered", (signal: SignalData) => {
       setCallAccepted(true);
       setCallingStatus("");
+      stopOutgoingRingtone();
       if (connectionRef.current) {
         connectionRef.current.signal(signal);
       }
@@ -163,6 +206,7 @@ const VideoCall: React.FC = () => {
 
     socket.on("call-rejected", () => {
       setCallingStatus("Call was rejected");
+      stopOutgoingRingtone();
       setTimeout(() => resetCallState(), 2000);
     });
 
@@ -270,7 +314,9 @@ const VideoCall: React.FC = () => {
     }
 
     resetCallState();
-    setCallingStatus(`Calling ${registeredUsers.find(u => u.socketId === id)?.customId || id.slice(0, 6)}...`);
+    const targetUser = registeredUsers.find(u => u.socketId === id);
+    setCallingStatus(`Calling ${targetUser?.customId || id.slice(0, 6)}...`);
+    playOutgoingRingtone();
     
     const peer = new Peer({
       initiator: true,
@@ -297,12 +343,14 @@ const VideoCall: React.FC = () => {
     peer.on("connect", () => {
       setCallAccepted(true);
       setCallingStatus("");
+      stopOutgoingRingtone();
     });
 
     peer.on("error", (err) => {
       console.error("Peer error:", err);
       setError("Call connection failed");
       setCallingStatus("Call failed");
+      stopOutgoingRingtone();
       setTimeout(() => resetCallState(), 2000);
     });
 
@@ -319,6 +367,7 @@ const VideoCall: React.FC = () => {
       return;
     }
 
+    stopIncomingRingtone();
     const peer = new Peer({
       initiator: false,
       trickle: false,
@@ -356,6 +405,7 @@ const VideoCall: React.FC = () => {
 
   const rejectCall = () => {
     socket.emit("reject-call", { to: caller });
+    stopIncomingRingtone();
     resetCallState();
   };
 
