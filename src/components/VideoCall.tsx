@@ -45,7 +45,6 @@ const VideoCall: React.FC = () => {
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
-  const screenShareVideo = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<Peer.Instance | null>(null);
   const outgoingRingtoneRef = useRef<HTMLAudioElement | null>(null);
   const incomingRingtoneHTMLRef = useRef<HTMLAudioElement | null>(null);
@@ -340,22 +339,33 @@ const VideoCall: React.FC = () => {
       setScreenStream(screenStream);
       setIsScreenSharing(true);
 
-      if (screenShareVideo.current) {
-        screenShareVideo.current.srcObject = screenStream;
-        screenShareVideo.current.onloadedmetadata = () => {
-          screenShareVideo.current?.play().catch(e => console.error("Screen share play error:", e));
-        };
-      }
-
       // Replace the video track in the peer connection
       if (connectionRef.current) {
         const videoTracks = screenStream.getVideoTracks();
         if (videoTracks.length > 0) {
+          // Store the original video track to restore later
+          const originalVideoTrack = stream?.getVideoTracks()[0];
+          
+          // Replace the track
           connectionRef.current.replaceTrack(
             connectionRef.current.streams[0].getVideoTracks()[0],
             videoTracks[0],
             connectionRef.current.streams[0]
           );
+
+          // Update the local video element to show the screen share
+          if (myVideo.current) {
+            const newStream = new MediaStream();
+            if (stream) {
+              // Keep the audio track from the original stream
+              const audioTracks = stream.getAudioTracks();
+              if (audioTracks.length > 0) {
+                newStream.addTrack(audioTracks[0]);
+              }
+            }
+            newStream.addTrack(videoTracks[0]);
+            myVideo.current.srcObject = newStream;
+          }
         }
       }
 
@@ -388,8 +398,9 @@ const VideoCall: React.FC = () => {
         }
       }
 
-      if (screenShareVideo.current) {
-        screenShareVideo.current.srcObject = null;
+      // Restore the local video element
+      if (myVideo.current && stream) {
+        myVideo.current.srcObject = stream;
       }
     }
   };
@@ -641,12 +652,12 @@ const VideoCall: React.FC = () => {
                 style={{ 
                   maxWidth: "200px",
                   display: "block",
-                  transform: "scaleX(-1)",
-                  backgroundColor: !isVideoOn ? "black" : "transparent"
+                  transform: isScreenSharing ? "scaleX(1)" : "scaleX(-1)",
+                  backgroundColor: (!isVideoOn && !isScreenSharing) ? "black" : "transparent"
                 }}
               />
               <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
-                You
+                {isScreenSharing ? "Your Screen" : "You"}
               </div>
               <div className="absolute top-2 left-2 flex gap-2">
                 <button 
@@ -713,26 +724,6 @@ const VideoCall: React.FC = () => {
               )}
             </div>
           </div>
-
-          {/* Screen share preview (only visible when sharing) */}
-          {isScreenSharing && (
-            <div className="mb-4 relative">
-              <video 
-                playsInline 
-                ref={screenShareVideo} 
-                autoPlay 
-                className="w-full rounded-lg border border-gray-300"
-                style={{ 
-                  maxWidth: "100%",
-                  display: "block",
-                  backgroundColor: "black"
-                }}
-              />
-              <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
-                Your Screen
-              </div>
-            </div>
-          )}
 
           <div className="mb-4">
             <h2 className="text-lg font-semibold mb-2">Available Users</h2>
