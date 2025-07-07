@@ -60,12 +60,21 @@ const VideoCall: React.FC = () => {
       outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
       outgoingRingtoneRef.current.loop = true;
     }
-    outgoingRingtoneRef.current.play().catch(e => {
-      console.error("Couldn't play outgoing ringtone:", e);
-      setNeedsUserInteraction(true);
-    });
+  
+    // Defensive: Stop if somehow already playing
+    stopOutgoingRingtone();
+  
+    outgoingRingtoneRef.current
+      .play()
+      .then(() => {
+        console.log("Outgoing ringtone playing");
+      })
+      .catch((e) => {
+        console.error("Could not play outgoing ringtone:", e);
+        setNeedsUserInteraction(true);
+      });
   };
-
+  
   const stopOutgoingRingtone = () => {
     if (outgoingRingtoneRef.current) {
       outgoingRingtoneRef.current.pause();
