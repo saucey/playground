@@ -118,9 +118,9 @@ const VideoCall: React.FC = () => {
 
   const stopIncomingRingtone = () => {
     if (incomingRingtoneRef.current) {
-      if (typeof incomingRingtoneRef.current.stop === 'function') {
+      if (incomingRingtoneRef.current instanceof AudioBufferSourceNode) {
         // Web Audio API source
-        (incomingRingtoneRef.current as AudioBufferSourceNode).stop();
+        incomingRingtoneRef.current.stop();
       } else {
         // HTML5 Audio
         (incomingRingtoneRef.current as HTMLAudioElement).pause();
