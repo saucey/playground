@@ -7,7 +7,7 @@ const SOCKET_URL = process.env.NODE_ENV === 'development'
   ? "http://localhost:5555"
   : "wss://video-call.devonauts.co.uk";
 
-const socket: Socket = io(SOCKET_URL, {
+const socket: Socket = io("wss://video-call.devonauts.co.uk", {
   transports: ["websocket"],
   reconnectionAttempts: 5,
   reconnectionDelay: 1000,
