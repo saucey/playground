@@ -40,7 +40,6 @@ const VideoCall: React.FC = () => {
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(true);
   const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
-  const [audioLoaded, setAudioLoaded] = useState(false);
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
@@ -50,26 +49,6 @@ const VideoCall: React.FC = () => {
   const incomingRingtoneWebRef = useRef<AudioBufferSourceNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
-  // Initialize audio elements
-  useEffect(() => {
-    // Preload outgoing ringtone
-    outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
-    outgoingRingtoneRef.current.loop = true;
-    outgoingRingtoneRef.current.preload = "auto";
-    outgoingRingtoneRef.current.load();
-    
-    outgoingRingtoneRef.current.addEventListener('canplaythrough', () => {
-      setAudioLoaded(true);
-    });
-
-    return () => {
-      if (outgoingRingtoneRef.current) {
-        outgoingRingtoneRef.current.pause();
-        outgoingRingtoneRef.current = null;
-      }
-    };
-  }, []);
-
   const isCallButtonDisabled = () => {
     const targetUser = registeredUsers.find(u => u.socketId === idToCall);
     return !me || !idToCall || callAccepted || callingStatus !== "" || receivingCall || 
@@ -77,29 +56,23 @@ const VideoCall: React.FC = () => {
   };
 
   const playOutgoingRingtone = () => {
-    try {
-      if (!outgoingRingtoneRef.current) {
-        outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
-        outgoingRingtoneRef.current.loop = true;
-        outgoingRingtoneRef.current.load();
-      }
-    
-      stopOutgoingRingtone();
-      
-      outgoingRingtoneRef.current.volume = 1.0;
-      outgoingRingtoneRef.current.currentTime = 0;
-      
-      outgoingRingtoneRef.current.play()
-        .then(() => {
-          console.log("Outgoing ringtone playing");
-        })
-        .catch((e) => {
-          console.error("HTML5 Audio failed, trying Web Audio fallback:", e);
-          playWebAudioFallback(RINGTONE_OUTGOING, true);
-        });
-    } catch (e) {
-      console.error("Outgoing ringtone error:", e);
+    if (!outgoingRingtoneRef.current) {
+      outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
+      outgoingRingtoneRef.current.loop = true;
     }
+  
+    // Defensive: Stop if somehow already playing
+    stopOutgoingRingtone();
+  
+    outgoingRingtoneRef.current
+      .play()
+      .then(() => {
+        console.log("Outgoing ringtone playing");
+      })
+      .catch((e) => {
+        console.error("Could not play outgoing ringtone:", e);
+        setNeedsUserInteraction(true);
+      });
   };
   
   const stopOutgoingRingtone = () => {
@@ -109,53 +82,44 @@ const VideoCall: React.FC = () => {
     }
   };
 
-  const playWebAudioFallback = (url: string, loop: boolean) => {
-    if (!audioContextRef.current) {
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-
-    fetch(url)
-      .then(res => res.arrayBuffer())
-      .then(buffer => audioContextRef.current!.decodeAudioData(buffer))
-      .then(decodedBuffer => {
-        const source = audioContextRef.current!.createBufferSource();
-        source.buffer = decodedBuffer;
-        source.loop = loop;
-        source.connect(audioContextRef.current!.destination);
-        source.start(0);
-
-        if (url === RINGTONE_OUTGOING) {
-          incomingRingtoneWebRef.current = source;
-        }
-      })
-      .catch(err => {
-        console.error("Web Audio fallback failed:", err);
-        setNeedsUserInteraction(true);
-      });
-  };
-
   const playIncomingRingtone = () => {
-    stopIncomingRingtone();
-
-    try {
-      if (typeof window !== 'undefined' && window.AudioContext) {
-        playWebAudioFallback(RINGTONE_INCOMING, true);
-      } else {
-        if (!incomingRingtoneHTMLRef.current) {
-          incomingRingtoneHTMLRef.current = new Audio(RINGTONE_INCOMING);
-          incomingRingtoneHTMLRef.current.loop = true;
-        }
-        incomingRingtoneHTMLRef.current.play().catch(e => {
-          console.error("HTML5 audio failed:", e);
-          setNeedsUserInteraction(true);
-        });
+    stopIncomingRingtone(); // <-- Add this to prevent stacking
+  
+    if (typeof window !== 'undefined' && window.AudioContext) {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
-    } catch (e) {
-      console.error("Incoming ringtone error:", e);
+  
+      fetch(RINGTONE_INCOMING)
+        .then(res => res.arrayBuffer())
+        .then(buffer => audioContextRef.current!.decodeAudioData(buffer))
+        .then(decodedBuffer => {
+          const source = audioContextRef.current!.createBufferSource();
+          source.buffer = decodedBuffer;
+          source.loop = true;
+          source.connect(audioContextRef.current!.destination);
+          source.start(0);
+  
+          incomingRingtoneWebRef.current = source;
+        })
+        .catch(err => {
+          console.warn("Web Audio failed, using HTML Audio fallback", err);
+          if (!incomingRingtoneHTMLRef.current) {
+            incomingRingtoneHTMLRef.current = new Audio(RINGTONE_INCOMING);
+            incomingRingtoneHTMLRef.current.loop = true;
+          }
+          incomingRingtoneHTMLRef.current.play().catch(e => {
+            console.error("Fallback HTML5 audio failed:", e);
+            setNeedsUserInteraction(true);
+          });
+        });
     }
   };
   
+  
+
   const stopIncomingRingtone = () => {
+    // Stop Web Audio version
     if (incomingRingtoneWebRef.current) {
       try {
         incomingRingtoneWebRef.current.stop();
@@ -166,6 +130,7 @@ const VideoCall: React.FC = () => {
       incomingRingtoneWebRef.current = null;
     }
   
+    // Stop HTML Audio fallback
     if (incomingRingtoneHTMLRef.current) {
       try {
         incomingRingtoneHTMLRef.current.pause();
@@ -173,9 +138,9 @@ const VideoCall: React.FC = () => {
       } catch (e) {
         console.error("Error stopping HTML ringtone:", e);
       }
+      incomingRingtoneHTMLRef.current = null;
     }
   };
-
   const resetCallState = () => {
     setCallAccepted(false);
     setReceivingCall(false);
@@ -425,11 +390,6 @@ const VideoCall: React.FC = () => {
 
   // Call management
   const callUser = (id: string) => {
-    if (!audioLoaded) {
-      setError("Audio is still loading. Please try again in a moment.");
-      return;
-    }
-
     playOutgoingRingtone();
     if (!stream) {
       setError("No local stream available");
@@ -484,6 +444,7 @@ const VideoCall: React.FC = () => {
   };
 
   const answerCall = () => {
+    // Prevent ringtone from restarting
     setReceivingCall(false);
     stopIncomingRingtone();
   
@@ -526,6 +487,7 @@ const VideoCall: React.FC = () => {
     peer.signal(callerSignal);
     connectionRef.current = peer;
   };
+  
 
   const rejectCall = () => {
     socket.emit("reject-call", { to: caller });
