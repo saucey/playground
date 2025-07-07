@@ -13,7 +13,7 @@ const socket: Socket = io("wss://video-call.devonauts.co.uk", {
   reconnectionDelay: 1000,
 });
 
-// Ringtone audio files (you might want to host these or use base64 encoded audio)
+// Ringtone audio files
 const RINGTONE_OUTGOING = "/mixkit-happy-bells-notification-937.mp3";
 const RINGTONE_INCOMING = "/mixkit-happy-bells-notification-937.mp3";
 
@@ -39,12 +39,15 @@ const VideoCall: React.FC = () => {
   const [callingStatus, setCallingStatus] = useState<string>("");
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(true);
+  const [audioContextAllowed, setAudioContextAllowed] = useState(false);
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<Peer.Instance | null>(null);
   const outgoingRingtoneRef = useRef<HTMLAudioElement | null>(null);
   const incomingRingtoneRef = useRef<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
 
   const isCallButtonDisabled = () => {
     const targetUser = registeredUsers.find(u => u.socketId === idToCall);
@@ -52,12 +55,47 @@ const VideoCall: React.FC = () => {
            (targetUser?.inCall && targetUser.inCallWith !== me);
   };
 
-  const playOutgoingRingtone = () => {
+  const enableAudio = async () => {
+    try {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        gainNodeRef.current = audioContextRef.current.createGain();
+        gainNodeRef.current.gain.value = 1.0;
+        gainNodeRef.current.connect(audioContextRef.current.destination);
+      }
+      
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+      
+      setAudioContextAllowed(true);
+      return true;
+    } catch (err) {
+      console.error("Audio permission error:", err);
+      setError("Please allow audio permissions to hear ringtones");
+      return false;
+    }
+  };
+
+  const playOutgoingRingtone = async () => {
     if (!outgoingRingtoneRef.current) {
       outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
       outgoingRingtoneRef.current.loop = true;
+      outgoingRingtoneRef.current.load();
     }
-    outgoingRingtoneRef.current.play().catch(e => console.error("Couldn't play outgoing ringtone:", e));
+
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile && !audioContextAllowed) {
+      setError("Tap the screen to enable ringtone");
+      return;
+    }
+
+    try {
+      await outgoingRingtoneRef.current.play();
+    } catch (e) {
+      console.error("Couldn't play outgoing ringtone:", e);
+      setError("Couldn't play ringtone. Tap to enable audio.");
+    }
   };
 
   const stopOutgoingRingtone = () => {
@@ -67,12 +105,25 @@ const VideoCall: React.FC = () => {
     }
   };
 
-  const playIncomingRingtone = () => {
+  const playIncomingRingtone = async () => {
     if (!incomingRingtoneRef.current) {
       incomingRingtoneRef.current = new Audio(RINGTONE_INCOMING);
       incomingRingtoneRef.current.loop = true;
+      incomingRingtoneRef.current.load();
     }
-    incomingRingtoneRef.current.play().catch(e => console.error("Couldn't play incoming ringtone:", e));
+
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile && !audioContextAllowed) {
+      setError("Tap the screen to enable ringtone");
+      return;
+    }
+
+    try {
+      await incomingRingtoneRef.current.play();
+    } catch (e) {
+      console.error("Couldn't play incoming ringtone:", e);
+      setError("Couldn't play ringtone. Tap to enable audio.");
+    }
   };
 
   const stopIncomingRingtone = () => {
@@ -102,7 +153,7 @@ const VideoCall: React.FC = () => {
     }
   };
 
-  // Initialize media stream
+  // Initialize media stream and pre-load audio
   useEffect(() => {
     const setupMedia = async () => {
       try {
@@ -130,6 +181,12 @@ const VideoCall: React.FC = () => {
       }
     };
   
+    // Pre-load audio files
+    outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
+    outgoingRingtoneRef.current.load();
+    incomingRingtoneRef.current = new Audio(RINGTONE_INCOMING);
+    incomingRingtoneRef.current.load();
+    
     setupMedia();
   
     return () => {
@@ -307,16 +364,22 @@ const VideoCall: React.FC = () => {
   };
 
   // Call management
-  const callUser = (id: string) => {
+  const callUser = async (id: string) => {
     if (!stream) {
       setError("No local stream available");
       return;
     }
 
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile && !audioContextAllowed) {
+      const enabled = await enableAudio();
+      if (!enabled) return;
+    }
+
     resetCallState();
     const targetUser = registeredUsers.find(u => u.socketId === id);
     setCallingStatus(`Calling ${targetUser?.customId || id.slice(0, 6)}...`);
-    playOutgoingRingtone();
+    await playOutgoingRingtone();
     
     const peer = new Peer({
       initiator: true,
@@ -361,10 +424,16 @@ const VideoCall: React.FC = () => {
     connectionRef.current = peer;
   };
 
-  const answerCall = () => {
+  const answerCall = async () => {
     if (!stream || !callerSignal) {
       setError("Cannot answer call: missing stream or signal");
       return;
+    }
+
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile && !audioContextAllowed) {
+      const enabled = await enableAudio();
+      if (!enabled) return;
     }
 
     stopIncomingRingtone();
@@ -414,14 +483,27 @@ const VideoCall: React.FC = () => {
     resetCallState();
   };
 
+  const handleContainerClick = async () => {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile && !audioContextAllowed) {
+      await enableAudio();
+    }
+  };
+
   return (
-    <div className="p-4 max-w-md mx-auto">
+    <div className="p-4 max-w-md mx-auto" onClick={handleContainerClick}>
       <h1 className="text-xl font-bold mb-2">Video Calling App</h1>
       
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           {error}
           <button onClick={() => setError(null)} className="float-right font-bold">×</button>
+        </div>
+      )}
+
+      {!audioContextAllowed && (
+        <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded mb-4">
+          Tap anywhere to enable ringtones
         </div>
       )}
 
