@@ -30,6 +30,7 @@ const VideoCall: React.FC = () => {
   const [isRegistered, setIsRegistered] = useState<boolean>(false);
   const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [receivingCall, setReceivingCall] = useState<boolean>(false);
   const [caller, setCaller] = useState<string>("");
   const [callerSignal, setCallerSignal] = useState<SignalData | null>(null);
@@ -39,10 +40,12 @@ const VideoCall: React.FC = () => {
   const [callingStatus, setCallingStatus] = useState<string>("");
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(true);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
+  const screenShareVideo = useRef<HTMLVideoElement>(null);
   const connectionRef = useRef<Peer.Instance | null>(null);
   const outgoingRingtoneRef = useRef<HTMLAudioElement | null>(null);
   const incomingRingtoneHTMLRef = useRef<HTMLAudioElement | null>(null);
@@ -57,7 +60,6 @@ const VideoCall: React.FC = () => {
 
   const playOutgoingRingtone = () => {
     console.log('playing outgoing ringtone');
-    // Always create a new instance to ensure fresh state
     if (outgoingRingtoneRef.current) {
       outgoingRingtoneRef.current.pause();
       outgoingRingtoneRef.current.currentTime = 0;
@@ -86,7 +88,7 @@ const VideoCall: React.FC = () => {
   };
 
   const playIncomingRingtone = () => {
-    stopIncomingRingtone(); // <-- Add this to prevent stacking
+    stopIncomingRingtone();
   
     if (typeof window !== 'undefined' && window.AudioContext) {
       if (!audioContextRef.current) {
@@ -119,10 +121,7 @@ const VideoCall: React.FC = () => {
     }
   };
   
-  
-
   const stopIncomingRingtone = () => {
-    // Stop Web Audio version
     if (incomingRingtoneWebRef.current) {
       try {
         incomingRingtoneWebRef.current.stop();
@@ -133,7 +132,6 @@ const VideoCall: React.FC = () => {
       incomingRingtoneWebRef.current = null;
     }
   
-    // Stop HTML Audio fallback
     if (incomingRingtoneHTMLRef.current) {
       try {
         incomingRingtoneHTMLRef.current.pause();
@@ -154,7 +152,6 @@ const VideoCall: React.FC = () => {
     setCallerSignal(null);
     setNeedsUserInteraction(false);
     
-    // Stop all ringtones
     stopOutgoingRingtone();
     stopIncomingRingtone();
     
@@ -165,6 +162,11 @@ const VideoCall: React.FC = () => {
     
     if (userVideo.current) {
       userVideo.current.srcObject = null;
+    }
+
+    // Stop screen sharing when call ends
+    if (isScreenSharing) {
+      stopScreenShare();
     }
   };
 
@@ -201,6 +203,9 @@ const VideoCall: React.FC = () => {
     return () => {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
+      }
+      if (screenStream) {
+        screenStream.getTracks().forEach((track) => track.stop());
       }
       resetCallState();
     };
@@ -323,6 +328,80 @@ const VideoCall: React.FC = () => {
     };
   }, []);
 
+  // Screen sharing functions
+  const startScreenShare = async () => {
+    try {
+      // @ts-ignore - getDisplayMedia might not be in the type definitions
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false
+      });
+
+      setScreenStream(screenStream);
+      setIsScreenSharing(true);
+
+      if (screenShareVideo.current) {
+        screenShareVideo.current.srcObject = screenStream;
+        screenShareVideo.current.onloadedmetadata = () => {
+          screenShareVideo.current?.play().catch(e => console.error("Screen share play error:", e));
+        };
+      }
+
+      // Replace the video track in the peer connection
+      if (connectionRef.current) {
+        const videoTracks = screenStream.getVideoTracks();
+        if (videoTracks.length > 0) {
+          connectionRef.current.replaceTrack(
+            connectionRef.current.streams[0].getVideoTracks()[0],
+            videoTracks[0],
+            connectionRef.current.streams[0]
+          );
+        }
+      }
+
+      // Handle when user stops screen sharing via browser UI
+      screenStream.getVideoTracks()[0].onended = () => {
+        stopScreenShare();
+      };
+
+    } catch (err) {
+      console.error("Failed to share screen:", err);
+      setError("Could not start screen sharing");
+    }
+  };
+
+  const stopScreenShare = () => {
+    if (screenStream) {
+      screenStream.getTracks().forEach(track => track.stop());
+      setScreenStream(null);
+      setIsScreenSharing(false);
+
+      // Restore the camera video track
+      if (connectionRef.current && stream) {
+        const videoTracks = stream.getVideoTracks();
+        if (videoTracks.length > 0) {
+          connectionRef.current.replaceTrack(
+            connectionRef.current.streams[0].getVideoTracks()[0],
+            videoTracks[0],
+            connectionRef.current.streams[0]
+          );
+        }
+      }
+
+      if (screenShareVideo.current) {
+        screenShareVideo.current.srcObject = null;
+      }
+    }
+  };
+
+  const toggleScreenShare = () => {
+    if (isScreenSharing) {
+      stopScreenShare();
+    } else {
+      startScreenShare();
+    }
+  };
+
   // Media control functions
   const toggleMute = () => {
     if (stream) {
@@ -408,7 +487,6 @@ const VideoCall: React.FC = () => {
     const targetUser = registeredUsers.find(u => u.socketId === id);
     setCallingStatus(`Calling ${targetUser?.customId || id.slice(0, 6)}...`);
     
-    // Start the ringtone after state is reset
     playOutgoingRingtone();
     
     const peer = new Peer({
@@ -459,7 +537,6 @@ const VideoCall: React.FC = () => {
   };
 
   const answerCall = () => {
-    // Prevent ringtone from restarting
     setReceivingCall(false);
     stopIncomingRingtone();
   
@@ -502,7 +579,6 @@ const VideoCall: React.FC = () => {
     peer.signal(callerSignal);
     connectionRef.current = peer;
   };
-  
 
   const rejectCall = () => {
     stopIncomingRingtone();
@@ -605,6 +681,17 @@ const VideoCall: React.FC = () => {
                     </svg>
                   )}
                 </button>
+                {callAccepted && (
+                  <button 
+                    onClick={toggleScreenShare}
+                    className={`bg-black bg-opacity-50 text-white p-2 rounded-full ${isScreenSharing ? 'bg-blue-500' : ''}`}
+                    title={isScreenSharing ? "Stop screen sharing" : "Share screen"}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                  </button>
+                )}
               </div>
             </div>
             <div className="relative">
@@ -626,6 +713,26 @@ const VideoCall: React.FC = () => {
               )}
             </div>
           </div>
+
+          {/* Screen share preview (only visible when sharing) */}
+          {isScreenSharing && (
+            <div className="mb-4 relative">
+              <video 
+                playsInline 
+                ref={screenShareVideo} 
+                autoPlay 
+                className="w-full rounded-lg border border-gray-300"
+                style={{ 
+                  maxWidth: "100%",
+                  display: "block",
+                  backgroundColor: "black"
+                }}
+              />
+              <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
+                Your Screen
+              </div>
+            </div>
+          )}
 
           <div className="mb-4">
             <h2 className="text-lg font-semibold mb-2">Available Users</h2>
