@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 
-const SOCKET_URL = process.env.NODE_ENV === "development" 
+const SOCKET_URL = process.env.NODE_ENV === 'development' 
   ? "wss://video-call.devonauts.co.uk" 
   : "http://localhost:5555";
 
@@ -32,6 +32,7 @@ const VideoCall: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [callingStatus, setCallingStatus] = useState<string>("");
   const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOn, setIsVideoOn] = useState(true);
 
   const myVideo = useRef<HTMLVideoElement>(null);
   const userVideo = useRef<HTMLVideoElement>(null);
@@ -62,26 +63,16 @@ const VideoCall: React.FC = () => {
   useEffect(() => {
     const setupMedia = async () => {
       try {
-        // First get video only to trigger permissions
-        const videoStream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: "user" }
+        // Get both video and audio initially
+        const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: "user" },
+          audio: true
         });
         
-        // Then get audio separately (works better on mobile)
-        const audioStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: true 
-        });
-
-        // Combine the streams
-        const combinedStream = new MediaStream([
-          ...videoStream.getVideoTracks(),
-          ...audioStream.getAudioTracks()
-        ]);
-        
-        setStream(combinedStream);
+        setStream(mediaStream);
         
         if (myVideo.current) {
-          myVideo.current.srcObject = combinedStream;
+          myVideo.current.srcObject = mediaStream;
           myVideo.current.onloadedmetadata = () => {
             myVideo.current?.play().catch(e => console.error("Video play error:", e));
           };
@@ -118,9 +109,7 @@ const VideoCall: React.FC = () => {
 
   // Fallback to ensure video element gets stream
   useEffect(() => {
-    console.log(myVideo)
     if (stream && myVideo.current && !myVideo.current.srcObject) {
-      console.log('1')
       myVideo.current.srcObject = stream;
       myVideo.current.onloadedmetadata = () => {
         myVideo.current?.play().catch(e => console.error("Video play error:", e));
@@ -200,8 +189,68 @@ const VideoCall: React.FC = () => {
     if (stream) {
       const audioTracks = stream.getAudioTracks();
       if (audioTracks.length > 0) {
-        audioTracks[0].enabled = !audioTracks[0].enabled;
-        setIsMuted(!audioTracks[0].enabled);
+        const newMutedState = !audioTracks[0].enabled;
+        audioTracks[0].enabled = newMutedState;
+        setIsMuted(!newMutedState);
+        
+        // Update the peer connection if it exists
+        if (connectionRef.current) {
+          connectionRef.current.replaceTrack(
+            audioTracks[0],
+            audioTracks[0],
+            stream
+          );
+        }
+      }
+    }
+  };
+
+  const toggleVideo = async () => {
+    if (!stream) return;
+
+    const videoTracks = stream.getVideoTracks();
+    if (videoTracks.length > 0) {
+      const newVideoState = !videoTracks[0].enabled;
+      videoTracks[0].enabled = newVideoState;
+      setIsVideoOn(newVideoState);
+
+      // Update the peer connection if it exists
+      if (connectionRef.current) {
+        connectionRef.current.replaceTrack(
+          videoTracks[0],
+          videoTracks[0],
+          stream
+        );
+      }
+    } else if (!isVideoOn) {
+      // If video was off and we want to turn it back on
+      try {
+        const videoStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: "user" }
+        });
+        const videoTrack = videoStream.getVideoTracks()[0];
+        
+        // Add the new video track to our existing stream
+        stream.addTrack(videoTrack);
+        
+        // Update the peer connection
+        if (connectionRef.current) {
+          connectionRef.current.replaceTrack(
+            videoTrack,
+            videoTrack,
+            stream
+          );
+        }
+        
+        setIsVideoOn(true);
+        
+        // Clean up the temporary stream
+        videoStream.getTracks().forEach(track => {
+          if (track.kind === 'audio') track.stop();
+        });
+      } catch (err) {
+        console.error("Failed to re-enable video", err);
+        setError("Could not re-enable video. Please check permissions.");
       }
     }
   };
@@ -242,7 +291,6 @@ const VideoCall: React.FC = () => {
     peer.on("stream", (currentStream: MediaStream) => {
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
-        // Mobile audio workaround - play the remote stream
         userVideo.current.play().catch(e => console.error("Remote video play error:", e));
       }
     });
@@ -285,7 +333,6 @@ const VideoCall: React.FC = () => {
     peer.on("stream", (currentStream: MediaStream) => {
       if (userVideo.current) {
         userVideo.current.srcObject = currentStream;
-        // Mobile audio workaround - play the remote stream
         userVideo.current.play().catch(e => console.error("Remote video play error:", e));
       }
     });
@@ -350,7 +397,6 @@ const VideoCall: React.FC = () => {
             <button 
               onClick={registerUser} 
               className="bg-blue-500 text-white px-4 py-2 rounded"
-              // disabled={!customId.trim()}
             >
               Register
             </button>
@@ -369,20 +415,47 @@ const VideoCall: React.FC = () => {
                 style={{ 
                   maxWidth: "200px",
                   display: "block",
-                  transform: "scaleX(-1)" // Mirror effect
+                  transform: "scaleX(-1)", // Mirror effect
+                  backgroundColor: !isVideoOn ? "black" : "transparent"
                 }}
               />
               <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
                 You
               </div>
-              {callAccepted && (
+              <div className="absolute top-2 left-2 flex gap-2">
                 <button 
                   onClick={toggleMute}
-                  className="absolute top-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs"
+                  className={`bg-black bg-opacity-50 text-white p-2 rounded-full ${isMuted ? 'bg-red-500' : ''}`}
+                  title={isMuted ? "Unmute microphone" : "Mute microphone"}
                 >
-                  {isMuted ? "Unmute" : "Mute"}
+                  {isMuted ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" clipRule="evenodd" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
+                  )}
                 </button>
-              )}
+                <button 
+                  onClick={toggleVideo}
+                  className={`bg-black bg-opacity-50 text-white p-2 rounded-full ${!isVideoOn ? 'bg-red-500' : ''}`}
+                  title={isVideoOn ? "Turn off camera" : "Turn on camera"}
+                >
+                  {isVideoOn ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </div>
             <div className="relative">
               <video 
