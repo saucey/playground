@@ -63,31 +63,36 @@ const VideoCall: React.FC = () => {
   useEffect(() => {
     const setupMedia = async () => {
       try {
-        // Get both video and audio initially
-        const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+        const mediaStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user" },
-          audio: true
+          audio: true,
         });
-        
         setStream(mediaStream);
-        
-        if (myVideo.current) {
-          myVideo.current.srcObject = mediaStream;
-          myVideo.current.onloadedmetadata = () => {
-            myVideo.current?.play().catch(e => console.error("Video play error:", e));
-          };
-        }
+  
+        const tryAssignStream = () => {
+          if (myVideo.current) {
+            console.log("2");
+            myVideo.current.srcObject = mediaStream;
+            myVideo.current.onloadedmetadata = () => {
+              myVideo.current?.play().catch((e) => console.error("Video play error:", e));
+            };
+          } else {
+            requestAnimationFrame(tryAssignStream); // Retry until ref is available
+          }
+        };
+  
+        tryAssignStream();
       } catch (err) {
         console.error("Failed to get media devices", err);
         setError("Could not access camera/microphone. Please check permissions.");
       }
     };
-
+  
     setupMedia();
-
+  
     return () => {
       if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach((track) => track.stop());
       }
     };
   }, []);
@@ -106,16 +111,6 @@ const VideoCall: React.FC = () => {
       };
     }
   }, [callAccepted]);
-
-  // Fallback to ensure video element gets stream
-  useEffect(() => {
-    if (stream && myVideo.current && !myVideo.current.srcObject) {
-      myVideo.current.srcObject = stream;
-      myVideo.current.onloadedmetadata = () => {
-        myVideo.current?.play().catch(e => console.error("Video play error:", e));
-      };
-    }
-  }, [stream, myVideo.current]);
 
   useEffect(() => {
     socket.on("connect", () => {
