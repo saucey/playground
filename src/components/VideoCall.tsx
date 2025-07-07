@@ -4,8 +4,8 @@ import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 
 const SOCKET_URL = process.env.NODE_ENV === 'development' 
-  ? "wss://video-call.devonauts.co.uk" 
-  : "http://localhost:5555";
+  ? "http://localhost:5555"
+  : "wss://video-call.devonauts.co.uk";
 
 const socket: Socket = io(SOCKET_URL, {
   transports: ["websocket"],
@@ -16,6 +16,8 @@ const socket: Socket = io(SOCKET_URL, {
 interface RegisteredUser {
   socketId: string;
   customId: string;
+  inCall: boolean;
+  inCallWith?: string;
 }
 
 const VideoCall: React.FC = () => {
@@ -39,7 +41,9 @@ const VideoCall: React.FC = () => {
   const connectionRef = useRef<Peer.Instance | null>(null);
 
   const isCallButtonDisabled = () => {
-    return !me || !idToCall || callAccepted || callingStatus !== "" || receivingCall;
+    const targetUser = registeredUsers.find(u => u.socketId === idToCall);
+    return !me || !idToCall || callAccepted || callingStatus !== "" || receivingCall || 
+           (targetUser?.inCall && targetUser.inCallWith !== me);
   };
 
   const resetCallState = () => {
@@ -59,7 +63,7 @@ const VideoCall: React.FC = () => {
     }
   };
 
-  // Initialize media stream with proper mobile audio handling
+  // Initialize media stream
   useEffect(() => {
     const setupMedia = async () => {
       try {
@@ -71,13 +75,12 @@ const VideoCall: React.FC = () => {
   
         const tryAssignStream = () => {
           if (myVideo.current) {
-            console.log("2");
             myVideo.current.srcObject = mediaStream;
             myVideo.current.onloadedmetadata = () => {
               myVideo.current?.play().catch((e) => console.error("Video play error:", e));
             };
           } else {
-            requestAnimationFrame(tryAssignStream); // Retry until ref is available
+            requestAnimationFrame(tryAssignStream);
           }
         };
   
@@ -97,13 +100,13 @@ const VideoCall: React.FC = () => {
     };
   }, []);
 
-  // Mobile audio workaround - create and play a silent audio element
+  // Mobile audio workaround
   useEffect(() => {
     if (callAccepted && typeof window !== 'undefined') {
       const audioElement = document.createElement('audio');
       audioElement.autoplay = true;
       audioElement.muted = false;
-      audioElement.volume = 0.01; // Nearly silent but enough to trigger audio context
+      audioElement.volume = 0.01;
       document.body.appendChild(audioElement);
       
       return () => {
@@ -112,6 +115,7 @@ const VideoCall: React.FC = () => {
     }
   }, [callAccepted]);
 
+  // Socket event listeners
   useEffect(() => {
     socket.on("connect", () => {
       console.log("Connected with ID:", socket.id);
@@ -129,6 +133,10 @@ const VideoCall: React.FC = () => {
 
     socket.on("user-unregistered", (socketId: string) => {
       setRegisteredUsers(prev => prev.filter(u => u.socketId !== socketId));
+    });
+
+    socket.on("users-updated", (users: RegisteredUser[]) => {
+      setRegisteredUsers(users);
     });
 
     socket.on("connect_error", (err) => {
@@ -171,6 +179,7 @@ const VideoCall: React.FC = () => {
       socket.off("registered");
       socket.off("user-registered");
       socket.off("user-unregistered");
+      socket.off("users-updated");
       socket.off("connect_error");
       socket.off("call-made");
       socket.off("call-answered");
@@ -180,6 +189,7 @@ const VideoCall: React.FC = () => {
     };
   }, []);
 
+  // Media control functions
   const toggleMute = () => {
     if (stream) {
       const audioTracks = stream.getAudioTracks();
@@ -188,7 +198,6 @@ const VideoCall: React.FC = () => {
         audioTracks[0].enabled = newMutedState;
         setIsMuted(!newMutedState);
         
-        // Update the peer connection if it exists
         if (connectionRef.current) {
           connectionRef.current.replaceTrack(
             audioTracks[0],
@@ -209,7 +218,6 @@ const VideoCall: React.FC = () => {
       videoTracks[0].enabled = newVideoState;
       setIsVideoOn(newVideoState);
 
-      // Update the peer connection if it exists
       if (connectionRef.current) {
         connectionRef.current.replaceTrack(
           videoTracks[0],
@@ -218,17 +226,13 @@ const VideoCall: React.FC = () => {
         );
       }
     } else if (!isVideoOn) {
-      // If video was off and we want to turn it back on
       try {
         const videoStream = await navigator.mediaDevices.getUserMedia({ 
           video: { facingMode: "user" }
         });
         const videoTrack = videoStream.getVideoTracks()[0];
-        
-        // Add the new video track to our existing stream
         stream.addTrack(videoTrack);
         
-        // Update the peer connection
         if (connectionRef.current) {
           connectionRef.current.replaceTrack(
             videoTrack,
@@ -238,8 +242,6 @@ const VideoCall: React.FC = () => {
         }
         
         setIsVideoOn(true);
-        
-        // Clean up the temporary stream
         videoStream.getTracks().forEach(track => {
           if (track.kind === 'audio') track.stop();
         });
@@ -250,15 +252,17 @@ const VideoCall: React.FC = () => {
     }
   };
 
+  // User registration
   const registerUser = () => {
     if (!customId.trim()) {
       setError("Please enter a custom ID");
       return;
     }
-    setError(null); // Clear any previous errors 
+    setError(null);
     socket.emit("register", customId);
   };
 
+  // Call management
   const callUser = (id: string) => {
     if (!stream) {
       setError("No local stream available");
@@ -410,7 +414,7 @@ const VideoCall: React.FC = () => {
                 style={{ 
                   maxWidth: "200px",
                   display: "block",
-                  transform: "scaleX(-1)", // Mirror effect
+                  transform: "scaleX(-1)",
                   backgroundColor: !isVideoOn ? "black" : "transparent"
                 }}
               />
@@ -475,16 +479,30 @@ const VideoCall: React.FC = () => {
           <div className="mb-4">
             <h2 className="text-lg font-semibold mb-2">Available Users</h2>
             <ul className="max-h-40 overflow-y-auto border rounded p-2">
-              {registeredUsers.filter(u => u.socketId !== me).map(user => (
-                <li 
-                  key={user.socketId} 
-                  className="p-2 hover:bg-gray-100 cursor-pointer flex justify-between items-center"
-                  onClick={() => setIdToCall(user.socketId)}
-                >
-                  <span>{user.customId}</span>
-                  <span className="text-xs text-gray-500">({user.socketId.slice(0, 6)})</span>
-                </li>
-              ))}
+              {registeredUsers.filter(u => u.socketId !== me).map(user => {
+                const isInCallWithMe = user.inCallWith === me;
+                const isInCallWithSomeoneElse = user.inCall && !isInCallWithMe;
+                
+                return (
+                  <li 
+                    key={user.socketId} 
+                    className={`p-2 ${isInCallWithSomeoneElse ? 'bg-gray-100 opacity-50' : 'hover:bg-gray-100'} cursor-pointer flex justify-between items-center`}
+                    onClick={() => !isInCallWithSomeoneElse && setIdToCall(user.socketId)}
+                    title={isInCallWithSomeoneElse ? "User is in another call" : ""}
+                  >
+                    <div className="flex items-center">
+                      <span>{user.customId}</span>
+                      {isInCallWithMe && (
+                        <span className="ml-2 text-xs text-green-500">(In call with you)</span>
+                      )}
+                      {isInCallWithSomeoneElse && (
+                        <span className="ml-2 text-xs text-red-500">(In call)</span>
+                      )}
+                    </div>
+                    <span className="text-xs text-gray-500">({user.socketId.slice(0, 6)})</span>
+                  </li>
+                );
+              })}
             </ul>
           </div>
 
