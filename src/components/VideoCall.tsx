@@ -175,67 +175,88 @@ const VideoCall: React.FC = () => {
 
   const startScreenRecording = async () => {
     try {
-      const cameraStream = stream;
-      if (!cameraStream) {
-        throw new Error("No camera stream available");
+      // Stop any existing recording first
+      if (isRecording) {
+        stopScreenRecording();
       }
   
+      // Get camera stream (should already exist from component setup)
+      const cameraStream = stream;
+      if (!cameraStream) {
+        throw new Error("Camera stream not available");
+      }
+  
+      // Get screen stream
       const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: true
+        video: {
+          displaySurface: "monitor",  // or "window", "browser"
+          frameRate: { ideal: 30 }
+        },
+        audio: true  // Include system audio if available
       });
   
-      // Create a new stream for recording only (don't modify the original stream)
-      const recordingStream = new MediaStream();
-      cameraStream.getTracks().forEach(track => recordingStream.addTrack(track.clone()));
-      screenStream.getTracks().forEach(track => recordingStream.addTrack(track));
+      // Create combined stream
+      const combinedStream = new MediaStream([
+        ...cameraStream.getVideoTracks(),  // Only take video from camera
+        ...screenStream.getVideoTracks(),  // Screen video
+        ...cameraStream.getAudioTracks(),  // Camera audio
+        ...screenStream.getAudioTracks()   // System audio if available
+      ]);
   
-      const mediaRecorder = new MediaRecorder(recordingStream, {
-        mimeType: 'video/webm'
-      });
+      // Create media recorder with proper mimeType
+      const options = {
+        mimeType: 'video/webm;codecs=vp9,opus',
+        videoBitsPerSecond: 2500000  // 2.5 Mbps
+      };
   
+      const mediaRecorder = new MediaRecorder(combinedStream, options);
       mediaRecorderRef.current = mediaRecorder;
-      setRecordedChunks([]); // Reset chunks when starting new recording
+  
+      const chunks: Blob[] = [];
+      setRecordedChunks([]);
   
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
+          chunks.push(event.data);
           setRecordedChunks(prev => [...prev, event.data]);
         }
       };
   
       mediaRecorder.onstop = () => {
-        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const blob = new Blob(chunks, { type: 'video/webm' });
         const url = URL.createObjectURL(blob);
         setRecordedVideoUrl(url);
         setIsRecording(false);
         
-        // Clean up the recording stream
-        recordingStream.getTracks().forEach(track => track.stop());
+        // Stop only the screen tracks (keep camera tracks active)
+        screenStream.getTracks().forEach(track => track.stop());
       };
   
-      // Request data every second to ensure we capture everything
-      mediaRecorder.start(1000);
+      // Start recording with 100ms timeslice for smoother data
+      mediaRecorder.start(100);
       setIsRecording(true);
   
-      // Handle when user stops sharing screen via browser UI
-      screenStream.getVideoTracks()[0].onended = () => {
+      // Handle case where user stops screen sharing via browser UI
+      screenStream.getVideoTracks()[0].addEventListener('ended', () => {
         stopScreenRecording();
-      };
+      });
   
     } catch (err) {
-      console.error("Error starting screen recording:", err);
-      setError("Could not start screen recording. Please check permissions.");
+      console.error("Screen recording error:", err);
+      setError("Failed to start screen recording. Please check permissions.");
     }
   };
 
 
   const stopScreenRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      // Request final data chunk
+      mediaRecorderRef.current.requestData();
+      
+      // Stop the recorder (this will trigger onstop)
       mediaRecorderRef.current.stop();
-      // Only stop the screen tracks, not the camera tracks
-      mediaRecorderRef.current.stream.getTracks()
-        .filter(track => track.kind === 'video' && track.getSettings().displaySurface)
-        .forEach(track => track.stop());
+      
+      // Clear interval if exists
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current);
       }
@@ -833,11 +854,14 @@ const VideoCall: React.FC = () => {
 
           {recordedVideoUrl && (
             <div className="mt-4 p-3 bg-gray-100 rounded">
-              <h3 className="font-semibold mb-2">Call Recording</h3>
-              <video 
-                controls 
-                src={recordedVideoUrl} 
+              <h3 className="font-semibold mb-2">Recording Preview</h3>
+              <video
+                controls
+                autoPlay
+                playsInline
+                src={recordedVideoUrl}
                 className="w-full rounded mb-2"
+                onCanPlay={(e) => e.currentTarget.play().catch(e => console.log("Play error:", e))}
               />
               <div className="flex justify-end">
                 <button 
