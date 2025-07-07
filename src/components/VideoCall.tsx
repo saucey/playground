@@ -63,7 +63,7 @@ const VideoCall: React.FC = () => {
     }
   
     // Defensive: Stop if somehow already playing
-    stopOutgoingRingtone();
+    // stopOutgoingRingtone();
   
     outgoingRingtoneRef.current
       .play()
