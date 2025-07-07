@@ -56,7 +56,7 @@ const VideoCall: React.FC = () => {
   };
 
   const playOutgoingRingtone = () => {
-    console.log('playing ringtone');
+    console.log('playing ringtone hre');
     if (!outgoingRingtoneRef.current) {
       outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
       outgoingRingtoneRef.current.loop = true;
