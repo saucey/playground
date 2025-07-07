@@ -173,124 +173,135 @@ const VideoCall: React.FC = () => {
     }
   };
 
-// Alternative version that shows camera as PIP on screen recording
-const startScreenRecording = async () => {
-  try {
-    // Stop any existing recording first
-    if (isRecording) {
-      stopScreenRecording();
-      return;
-    }
-
-    // Get screen stream
-    const screenStream = await navigator.mediaDevices.getDisplayMedia({
-      video: {
-        displaySurface: 'monitor', // or 'window', 'browser'
-        frameRate: { ideal: 30 }
-      },
-      audio: true // Include system audio if available
-    });
-
-    // Get camera stream (should already exist from component setup)
-    const cameraStream = stream;
-    if (!cameraStream) {
-      throw new Error("Camera stream not available");
-    }
-
-    // Create canvas for compositing
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error("Could not get canvas context");
-
-    // Create video elements for the streams
-    const screenVideo = document.createElement('video');
-    const cameraVideo = document.createElement('video');
-    screenVideo.srcObject = screenStream;
-    cameraVideo.srcObject = cameraStream;
-
-    // Wait for both videos to be ready
-    await Promise.all([
-      new Promise((resolve) => { screenVideo.onloadedmetadata = resolve; }),
-      new Promise((resolve) => { cameraVideo.onloadedmetadata = resolve; })
-    ]);
-
-    // Set canvas dimensions to match screen
-    canvas.width = screenVideo.videoWidth;
-    canvas.height = screenVideo.videoHeight;
-
-    // Calculate PIP size and position
-    const pipWidth = canvas.width / 4;
-    const pipHeight = (cameraVideo.videoHeight / cameraVideo.videoWidth) * pipWidth;
-    const pipX = canvas.width - pipWidth - 20;
-    const pipY = canvas.height - pipHeight - 20;
-
-    // Start drawing frames
-    const drawFrame = () => {
-      if (!isRecording) return;
-      
-      // Draw screen
-      ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
-      
-      // Draw camera PIP
-      ctx.drawImage(cameraVideo, pipX, pipY, pipWidth, pipHeight);
-      
-      requestAnimationFrame(drawFrame);
-    };
-
-    // Create media stream from canvas
-    const canvasStream = canvas.captureStream(30);
-    
-    // Add audio from screen stream if available
-    const audioTracks = screenStream.getAudioTracks();
-    if (audioTracks.length > 0) {
-      canvasStream.addTrack(audioTracks[0]);
-    }
-
-    // Create media recorder
-    const mediaRecorder = new MediaRecorder(canvasStream, {
-      mimeType: 'video/webm;codecs=vp9,opus',
-      videoBitsPerSecond: 2500000 // 2.5 Mbps
-    });
-
-    mediaRecorderRef.current = mediaRecorder;
-    const chunks: Blob[] = [];
-    setRecordedChunks([]);
-
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        chunks.push(event.data);
+  const startScreenRecording = async () => {
+    try {
+      setIsRecording(true);
+      setError(null);
+  
+      // Get screen stream
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          displaySurface: 'monitor',
+          frameRate: { ideal: 30 }
+        },
+        audio: true
+      }).catch(err => {
+        throw new Error(`Screen sharing denied: ${err.message}`);
+      });
+  
+      // Get camera stream
+      const cameraStream = stream;
+      if (!cameraStream) {
+        screenStream.getTracks().forEach(track => track.stop());
+        throw new Error("Camera stream not available");
       }
-    };
-
-    mediaRecorder.onstop = () => {
-      const blob = new Blob(chunks, { type: 'video/webm' });
-      const url = URL.createObjectURL(blob);
-      setRecordedVideoUrl(url);
-      setIsRecording(false);
+  
+      // Create canvas for compositing
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        screenStream.getTracks().forEach(track => track.stop());
+        throw new Error("Could not get canvas context");
+      }
+  
+      // Create video elements
+      const screenVideo = document.createElement('video');
+      const cameraVideo = document.createElement('video');
+      screenVideo.srcObject = screenStream;
+      cameraVideo.srcObject = cameraStream;
+      screenVideo.play().catch(console.error);
+      cameraVideo.play().catch(console.error);
+  
+      // Wait for metadata
+      await new Promise((resolve) => {
+        screenVideo.onloadedmetadata = resolve;
+      });
+      await new Promise((resolve) => {
+        cameraVideo.onloadedmetadata = resolve;
+      });
+  
+      // Set canvas dimensions
+      canvas.width = screenVideo.videoWidth;
+      canvas.height = screenVideo.videoHeight;
+  
+      // Calculate PIP size
+      const pipWidth = Math.floor(canvas.width / 4);
+      const pipHeight = Math.floor((cameraVideo.videoHeight / cameraVideo.videoWidth) * pipWidth);
+      const pipX = canvas.width - pipWidth - 20;
+      const pipY = canvas.height - pipHeight - 20;
+  
+      // Draw initial frame
+      ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(cameraVideo, pipX, pipY, pipWidth, pipHeight);
+  
+      // Create canvas stream
+      const canvasStream = canvas.captureStream(30);
       
-      // Stop only the screen tracks (keep camera tracks active)
-      screenStream.getTracks().forEach(track => track.stop());
-    };
-
-    // Start drawing frames
-    drawFrame();
-    
-    // Start recording with 100ms timeslice
-    mediaRecorder.start(100);
-    setIsRecording(true);
-
-    // Handle when user stops sharing via browser UI
-    screenStream.getVideoTracks()[0].onended = () => {
-      stopScreenRecording();
-    };
-
-  } catch (err) {
-    console.error("Screen recording error:", err);
-    setError("Failed to start screen recording. Please check permissions.");
-    setIsRecording(false);
-  }
-};
-
+      // Add audio
+      const audioTracks = screenStream.getAudioTracks();
+      if (audioTracks.length > 0) {
+        canvasStream.addTrack(audioTracks[0]);
+      }
+  
+      // Create recorder
+      const options = {
+        mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') 
+          ? 'video/webm;codecs=vp9,opus'
+          : 'video/webm'
+      };
+  
+      const mediaRecorder = new MediaRecorder(canvasStream, options);
+      mediaRecorderRef.current = mediaRecorder;
+      const chunks: Blob[] = [];
+  
+      // Draw loop
+      const drawFrame = () => {
+        if (!isRecording) return;
+        
+        try {
+          ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+          ctx.drawImage(cameraVideo, pipX, pipY, pipWidth, pipHeight);
+          requestAnimationFrame(drawFrame);
+        } catch (err) {
+          console.error("Drawing error:", err);
+        }
+      };
+  
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+  
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: options.mimeType });
+        const url = URL.createObjectURL(blob);
+        setRecordedVideoUrl(url);
+        setIsRecording(false);
+        
+        // Clean up
+        screenStream.getTracks().forEach(track => track.stop());
+        screenVideo.remove();
+        cameraVideo.remove();
+      };
+  
+      // Start drawing
+      drawFrame();
+      
+      // Start recording
+      mediaRecorder.start(100); // 100ms timeslice
+  
+      // Handle screen sharing stop
+      screenStream.getVideoTracks()[0].onended = () => {
+        stopScreenRecording();
+      };
+  
+    } catch (err) {
+      console.error("Recording error:", err);
+      setError(err.message);
+      setIsRecording(false);
+    }
+  };
 
 const stopScreenRecording = () => {
   if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -896,27 +907,35 @@ const stopScreenRecording = () => {
             </div>
           )}
 
-          {recordedVideoUrl && (
-            <div className="mt-4 p-3 bg-gray-100 rounded">
-              <h3 className="font-semibold mb-2">Recording Preview</h3>
-              <video
-                controls
-                autoPlay
-                playsInline
-                src={recordedVideoUrl}
-                className="w-full rounded mb-2"
-                onCanPlay={(e) => e.currentTarget.play().catch(e => console.log("Play error:", e))}
-              />
-              <div className="flex justify-end">
-                <button 
-                  onClick={downloadRecording}
-                  className="bg-blue-500 text-white px-4 py-2 rounded"
-                >
-                  Download Recording
-                </button>
-              </div>
-            </div>
-          )}
+
+{recordedVideoUrl && (
+  <div className="mt-4 p-3 bg-gray-100 rounded">
+    <h3 className="font-semibold mb-2">Recording Preview</h3>
+    <video
+      controls
+      autoPlay
+      playsInline
+      src={recordedVideoUrl}
+      className="w-full rounded mb-2"
+      onCanPlay={(e) => {
+        e.currentTarget.play().catch(e => console.log("Play error:", e));
+      }}
+      onError={(e) => {
+        console.error("Video error:", e.currentTarget.error);
+        setError("Failed to play recording preview");
+      }}
+    />
+    <div className="flex justify-end">
+      <button 
+        onClick={downloadRecording}
+        className="bg-blue-500 text-white px-4 py-2 rounded"
+      >
+        Download Recording
+      </button>
+    </div>
+  </div>
+)}
+
         </>
       )}
     </div>
