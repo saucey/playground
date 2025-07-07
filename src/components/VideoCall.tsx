@@ -55,15 +55,17 @@ const VideoCall: React.FC = () => {
            (targetUser?.inCall && targetUser.inCallWith !== me);
   };
 
-  const playOutgoingRingtone  = () => {
-    console.log('playing ringtone');
-    if (!outgoingRingtoneRef.current) {
-      outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
-      outgoingRingtoneRef.current.loop = true;
+  const playOutgoingRingtone = () => {
+    console.log('playing outgoing ringtone');
+    // Always create a new instance to ensure fresh state
+    if (outgoingRingtoneRef.current) {
+      outgoingRingtoneRef.current.pause();
+      outgoingRingtoneRef.current.currentTime = 0;
+      outgoingRingtoneRef.current = null;
     }
-  
-    // Defensive: Stop if somehow already playing
-    // stopOutgoingRingtone();
+    
+    outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
+    outgoingRingtoneRef.current.loop = true;
   
     outgoingRingtoneRef.current
       .play()
@@ -142,6 +144,7 @@ const VideoCall: React.FC = () => {
       incomingRingtoneHTMLRef.current = null;
     }
   };
+
   const resetCallState = () => {
     console.log('resetting call state');
     setCallAccepted(false);
@@ -151,8 +154,9 @@ const VideoCall: React.FC = () => {
     setCallerSignal(null);
     setNeedsUserInteraction(false);
     
-    // stopOutgoingRingtone();
-    // stopIncomingRingtone();
+    // Stop all ringtones
+    stopOutgoingRingtone();
+    stopIncomingRingtone();
     
     if (connectionRef.current) {
       connectionRef.current.destroy();
@@ -303,6 +307,8 @@ const VideoCall: React.FC = () => {
     });
 
     return () => {
+      stopOutgoingRingtone();
+      stopIncomingRingtone();
       socket.off("connect");
       socket.off("registered");
       socket.off("user-registered");
@@ -392,15 +398,18 @@ const VideoCall: React.FC = () => {
 
   // Call management
   const callUser = (id: string) => {
-    playOutgoingRingtone();
+    resetCallState();
+  
     if (!stream) {
       setError("No local stream available");
       return;
     }
-
-    resetCallState();
+  
     const targetUser = registeredUsers.find(u => u.socketId === id);
     setCallingStatus(`Calling ${targetUser?.customId || id.slice(0, 6)}...`);
+    
+    // Start the ringtone after state is reset
+    playOutgoingRingtone();
     
     const peer = new Peer({
       initiator: true,
@@ -496,8 +505,8 @@ const VideoCall: React.FC = () => {
   
 
   const rejectCall = () => {
-    socket.emit("reject-call", { to: caller });
     stopIncomingRingtone();
+    socket.emit("reject-call", { to: caller });
     resetCallState();
   };
 
