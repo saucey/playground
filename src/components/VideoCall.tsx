@@ -58,7 +58,7 @@ const [showPreviewModal, setShowPreviewModal] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   
   useEffect(() => {
-    const newSocket = io("wss://video-call.devonauts.co.uk", {
+    const newSocket = io("http://localhost:5555", {
       transports: ["websocket", "polling"], // Fallback to polling if WS fails
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
@@ -653,7 +653,6 @@ const closePreviewModal = () => {
     socket.emit("end-call");
     resetCallState();
   };
-  
 
   return (
     <div className="max-w-4xl mx-auto p-6">
@@ -692,7 +691,7 @@ const closePreviewModal = () => {
             </button>
           </div>
         </div>
-      ) : (
+        ) : (
         <>
           {/* VIDEO SECTION */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
