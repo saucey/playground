@@ -60,6 +60,7 @@ const startRecording = async () => {
   try {
     let audioStream: MediaStream | null = null;
     let screenStream: MediaStream | null = null;
+    let webcamStream: MediaStream | null = null;
     
     try {
       // Try to get microphone audio first
@@ -69,7 +70,7 @@ const startRecording = async () => {
     }
 
     try {
-      // Then get screen capture
+      // Get screen capture
       screenStream = await (navigator.mediaDevices as any).getDisplayMedia({
         video: {
           displaySurface: 'browser',
@@ -80,24 +81,130 @@ const startRecording = async () => {
           noiseSuppression: false
         }
       });
+
+      // Get webcam stream with constrained resolution for better performance
+      webcamStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 320, max: 640 },
+          height: { ideal: 180, max: 360 },
+          frameRate: { ideal: 15, max: 30 }
+        }
+      });
     } catch (screenError) {
       console.error("Screen share cancelled", screenError);
       if (audioStream) audioStream.getTracks().forEach(t => t.stop());
+      if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
       throw new Error("Screen sharing is required");
     }
 
-    // Combine streams
-    const combinedStream = new MediaStream([
-      ...screenStream.getVideoTracks(),
-      ...(audioStream ? audioStream.getAudioTracks() : 
-          screenStream.getAudioTracks().length ? screenStream.getAudioTracks() : [])
+    // Create a canvas to combine the streams
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Could not get canvas context');
+    
+    // Set canvas dimensions to match screen stream
+    const screenTrack = screenStream.getVideoTracks()[0];
+    const screenSettings = screenTrack.getSettings();
+    canvas.width = screenSettings.width || 1280;
+    canvas.height = screenSettings.height || 720;
+    
+    // Create video elements for the streams
+    const screenVideo = document.createElement('video');
+    screenVideo.srcObject = new MediaStream([screenTrack]);
+    screenVideo.autoplay = true;
+    screenVideo.playsInline = true;
+    
+    const webcamVideo = document.createElement('video');
+    webcamVideo.srcObject = new MediaStream(webcamStream.getVideoTracks());
+    webcamVideo.autoplay = true;
+    webcamVideo.playsInline = true;
+    
+    // Webcam overlay dimensions and position (top right)
+    const webcamWidth = Math.min(canvas.width / 4, 320); // Max 320px width
+    const webcamHeight = (webcamWidth * 9) / 16; // 16:9 aspect ratio
+    const webcamX = canvas.width - webcamWidth - 20; // 20px from right
+    const webcamY = 20; // 20px from top
+    
+    // Use a timer instead of requestAnimationFrame for more consistent frame rate
+    let animationFrameId: number;
+    let lastDrawTime = 0;
+    const targetFPS = 25;
+    const frameDelay = 1000 / targetFPS;
+    
+    const drawFrame = () => {
+      const now = performance.now();
+      if (now - lastDrawTime >= frameDelay) {
+        lastDrawTime = now;
+        
+        try {
+          // Draw screen
+          ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+          
+          // Draw webcam overlay with rounded corners
+          ctx.save();
+          // Create rounded rectangle path
+          const cornerRadius = 10;
+          ctx.beginPath();
+          ctx.moveTo(webcamX + cornerRadius, webcamY);
+          ctx.lineTo(webcamX + webcamWidth - cornerRadius, webcamY);
+          ctx.quadraticCurveTo(webcamX + webcamWidth, webcamY, webcamX + webcamWidth, webcamY + cornerRadius);
+          ctx.lineTo(webcamX + webcamWidth, webcamY + webcamHeight - cornerRadius);
+          ctx.quadraticCurveTo(webcamX + webcamWidth, webcamY + webcamHeight, webcamX + webcamWidth - cornerRadius, webcamY + webcamHeight);
+          ctx.lineTo(webcamX + cornerRadius, webcamY + webcamHeight);
+          ctx.quadraticCurveTo(webcamX, webcamY + webcamHeight, webcamX, webcamY + webcamHeight - cornerRadius);
+          ctx.lineTo(webcamX, webcamY + cornerRadius);
+          ctx.quadraticCurveTo(webcamX, webcamY, webcamX + cornerRadius, webcamY);
+          ctx.closePath();
+          ctx.clip();
+          
+          // Draw webcam video
+          ctx.drawImage(webcamVideo, webcamX, webcamY, webcamWidth, webcamHeight);
+          
+          // Add border
+          ctx.strokeStyle = 'white';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.restore();
+        } catch (e) {
+          console.error('Error drawing frame:', e);
+        }
+      }
+      animationFrameId = requestAnimationFrame(drawFrame);
+    };
+    
+    // Wait for both videos to be ready
+    await Promise.all([
+      new Promise<void>((resolve) => {
+        screenVideo.onloadedmetadata = () => {
+          screenVideo.play().catch(console.error);
+          resolve();
+        };
+      }),
+      new Promise<void>((resolve) => {
+        webcamVideo.onloadedmetadata = () => {
+          webcamVideo.play().catch(console.error);
+          resolve();
+        };
+      })
     ]);
-
-    if (combinedStream.getAudioTracks().length === 0) {
-      console.warn("No audio tracks available in recording");
+    
+    // Start drawing
+    drawFrame();
+    
+    // Capture canvas stream
+    const canvasStream = canvas.captureStream(targetFPS);
+    
+    // Combine audio tracks
+    const audioTracks = [
+      ...(audioStream ? audioStream.getAudioTracks() : []),
+      ...(screenStream.getAudioTracks().length ? screenStream.getAudioTracks() : [])
+    ];
+    
+    if (audioTracks.length > 0) {
+      audioTracks.forEach(track => canvasStream.addTrack(track));
     }
 
-    const recorder = new MediaRecorder(combinedStream, {
+    const recorder = new MediaRecorder(canvasStream, {
       mimeType: 'video/webm;codecs=vp9,opus',
       audioBitsPerSecond: 128000,
       videoBitsPerSecond: 2500000
@@ -111,14 +218,21 @@ const startRecording = async () => {
     };
 
     recorder.onstop = () => {
+      cancelAnimationFrame(animationFrameId);
       const blob = new Blob(chunks, { type: 'video/webm' });
       const url = URL.createObjectURL(blob);
       setRecordedChunks(chunks);
       setRecordedVideoUrl(url);
       setShowPreviewModal(true);
       
-      // Clean up stream
+      // Clean up streams
       screenStream.getTracks().forEach(track => track.stop());
+      if (webcamStream) webcamStream.getTracks().forEach(track => track.stop());
+      if (audioStream) audioStream.getTracks().forEach(track => track.stop());
+      
+      // Clean up video elements
+      screenVideo.srcObject = null;
+      webcamVideo.srcObject = null;
     };
 
     // Handle if user stops sharing via browser UI

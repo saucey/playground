@@ -3,15 +3,16 @@ import React, { useEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 
-const SOCKET_URL = process.env.NODE_ENV === 'development' 
-  ? "http://localhost:5555"
-  : "wss://video-call.devonauts.co.uk";
+// const SOCKET_URL = process.env.NODE_ENV === 'development' 
+//   ? "http://localhost:5555"
+//   : "wss://video-call.devonauts.co.uk";
 
-const socket: Socket = io("wss://video-call.devonauts.co.uk", {
-  transports: ["websocket"],
-  reconnectionAttempts: 5,
-  reconnectionDelay: 1000,
-});
+// const socket: Socket = io("http://localhost:5555", {
+//   transports: ["websocket"],
+//   reconnectionAttempts: 5,
+//   reconnectionDelay: 1000,
+//   autoConnect: true, // Make sure this is true
+// });
 
 // Ringtone audio files
 const RINGTONE_OUTGOING = "/mixkit-happy-bells-notification-937.mp3";
@@ -25,34 +26,248 @@ interface RegisteredUser {
 }
 
 const VideoCall: React.FC = () => {
-  const [me, setMe] = useState<string>("");
-  const [customId, setCustomId] = useState<string>("");
-  const [isRegistered, setIsRegistered] = useState<boolean>(false);
-  const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [receivingCall, setReceivingCall] = useState<boolean>(false);
-  const [caller, setCaller] = useState<string>("");
-  const [callerSignal, setCallerSignal] = useState<SignalData | null>(null);
-  const [callAccepted, setCallAccepted] = useState<boolean>(false);
-  const [idToCall, setIdToCall] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-  const [callingStatus, setCallingStatus] = useState<string>("");
-  const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOn, setIsVideoOn] = useState(true);
-  const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
-  const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
+const [socket, setSocket] = useState<Socket | null>(null);
+const [me, setMe] = useState<string>("");
+const [customId, setCustomId] = useState<string>("");
+const [isRegistered, setIsRegistered] = useState<boolean>(false);
+const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
+const [stream, setStream] = useState<MediaStream | null>(null);
+const [receivingCall, setReceivingCall] = useState<boolean>(false);
+const [caller, setCaller] = useState<string>("");
+const [callerSignal, setCallerSignal] = useState<SignalData | null>(null);
+const [callAccepted, setCallAccepted] = useState<boolean>(false);
+const [idToCall, setIdToCall] = useState<string>("");
+const [error, setError] = useState<string | null>(null);
+const [callingStatus, setCallingStatus] = useState<string>("");
+const [isMuted, setIsMuted] = useState(false);
+const [isVideoOn, setIsVideoOn] = useState(true);
+const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
 
-  const myVideo = useRef<HTMLVideoElement>(null);
-  const userVideo = useRef<HTMLVideoElement>(null);
-  const connectionRef = useRef<Peer.Instance | null>(null);
-  const outgoingRingtoneRef = useRef<HTMLAudioElement | null>(null);
-  const incomingRingtoneHTMLRef = useRef<HTMLAudioElement | null>(null);
-  const incomingRingtoneWebRef = useRef<AudioBufferSourceNode | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
+const myVideo = useRef<HTMLVideoElement>(null);
+const userVideo = useRef<HTMLVideoElement>(null);
+const connectionRef = useRef<Peer.Instance | null>(null);
+const outgoingRingtoneRef = useRef<HTMLAudioElement | null>(null);
+const incomingRingtoneHTMLRef = useRef<HTMLAudioElement | null>(null);
+const incomingRingtoneWebRef = useRef<AudioBufferSourceNode | null>(null);
+const audioContextRef = useRef<AudioContext | null>(null);
+
+const [isRecording, setIsRecording] = useState(false);
+const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
+const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
+const [showPreviewModal, setShowPreviewModal] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  useEffect(() => {
+    const newSocket = io("wss://video-call.devonauts.co.uk", {
+      transports: ["websocket", "polling"], // Fallback to polling if WS fails
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      autoConnect: true,
+    });
+    
+    setSocket(newSocket);
+    
+    return () => {
+      newSocket.disconnect();
+    };
+  }, []);
+
+// Socket event listeners
+  useEffect(() => {
+  if (!socket) return;
+    
+  socket.on("connect", () => {
+    console.log("Connected with ID:", socket.id);
+    setMe(socket.id);
+  });
+    
+  socket.on("registered", (users: RegisteredUser[]) => {
+    console.log(registeredUsers, 'registered')
+    setIsRegistered(true);
+    setRegisteredUsers(users);
+  });
+
+  socket.on("user-registered", (user: RegisteredUser) => {
+    setRegisteredUsers(prev => [...prev, user]);
+    console.log(registeredUsers, 'user-registered')
+  });
+
+  socket.on("user-unregistered", (socketId: string) => {
+    setRegisteredUsers(prev => prev.filter(u => u.socketId !== socketId));
+    console.log(registeredUsers, 'user-unregistered')
+  });
+  
+  socket.on("users-updated", (users: RegisteredUser[]) => {
+    setRegisteredUsers(users);
+    console.log(registeredUsers, 'users-updated')
+  });
+
+  socket.on("connect_error", (err) => {
+    console.error("Connection error:", err);
+    setError("Connection failed. Please check your network.");
+  });
+
+  socket.on("call-made", ({ from, signal, customId: callerCustomId }) => {
+    if (!callAccepted && !callingStatus) {
+      setReceivingCall(true);
+      setCaller(from);
+      setCallerSignal(signal);
+      // setError(`${callerCustomId} is calling you...`);
+      playIncomingRingtone();
+    }
+  });
+
+  socket.on("call-answered", (signal: SignalData) => {
+    setCallAccepted(true);
+    setCallingStatus("");
+    stopOutgoingRingtone();
+    if (connectionRef.current) {
+      connectionRef.current.signal(signal);
+    }
+  });
+    
+    // Add to your client's socket event listeners
+  socket.on("call-rejected", () => {
+    setCallingStatus("Call was rejected");
+    resetCallState()
+  });
+
+  socket.on("call-ended", () => {
+    resetCallState();
+  });
+
+  socket.on("registration-error", (message: string) => {
+    setError(message);
+  });
+
+  return () => {
+    stopOutgoingRingtone();
+    stopIncomingRingtone();
+    socket.off("connect");
+    socket.off("registered");
+    socket.off("user-registered");
+    socket.off("user-unregistered");
+    socket.off("users-updated");
+    socket.off("connect_error");
+    socket.off("call-made");
+    socket.off("call-answered");
+    socket.off("call-rejected");
+    socket.off("call-ended");
+    socket.off("registration-error");
+  };
+}, [socket]);
+
+// Update the startRecording function to only record the screen
+const startRecording = async () => {
+  try {
+    let audioStream: MediaStream | null = null;
+    let screenStream: MediaStream | null = null;
+    
+    try {
+      // Try to get microphone audio first
+      audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (audioError) {
+      console.warn("Microphone access denied, recording without audio", audioError);
+    }
+
+    try {
+      // Then get screen capture
+      screenStream = await (navigator.mediaDevices as any).getDisplayMedia({
+        video: {
+          displaySurface: 'browser',
+          cursor: 'always'
+        },
+        audio: audioStream ? false : {  // Only ask for system audio if no microphone
+          echoCancellation: false,
+          noiseSuppression: false
+        }
+      });
+    } catch (screenError) {
+      console.error("Screen share cancelled", screenError);
+      if (audioStream) audioStream.getTracks().forEach(t => t.stop());
+      throw new Error("Screen sharing is required");
+    }
+
+    // Combine streams
+    const combinedStream = new MediaStream([
+      ...screenStream.getVideoTracks(),
+      ...(audioStream ? audioStream.getAudioTracks() : 
+          screenStream.getAudioTracks().length ? screenStream.getAudioTracks() : [])
+    ]);
+
+    if (combinedStream.getAudioTracks().length === 0) {
+      console.warn("No audio tracks available in recording");
+    }
+
+    const recorder = new MediaRecorder(combinedStream, {
+      mimeType: 'video/webm;codecs=vp9,opus',
+      audioBitsPerSecond: 128000,
+      videoBitsPerSecond: 2500000
+    });
+
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        chunks.push(e.data);
+      }
+    };
+
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      setRecordedChunks(chunks);
+      setRecordedVideoUrl(url);
+      setShowPreviewModal(true);
+      
+      // Clean up stream
+      screenStream.getTracks().forEach(track => track.stop());
+    };
+
+    // Handle if user stops sharing via browser UI
+    screenStream.getVideoTracks()[0].onended = () => {
+      if (isRecording) {
+        stopRecording();
+      }
+    };
+
+    recorder.start(100); // Collect data every 100ms
+    mediaRecorderRef.current = recorder;
+    setIsRecording(true);
+  } catch (err) {
+    console.error('Error starting screen recording:', err);
+    setError('Failed to start screen recording. Please check permissions.');
+  }
+};
+
+const stopRecording = () => {
+  if (mediaRecorderRef.current && isRecording) {
+    mediaRecorderRef.current.stop();
+    setIsRecording(false);
+  }
+};
+
+const downloadRecording = () => {
+  if (recordedVideoUrl) {
+    const a = document.createElement('a');
+    a.href = recordedVideoUrl;
+    a.download = `recording-${new Date().toISOString()}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(recordedVideoUrl);
+    }, 100);
+  }
+};
+
+const closePreviewModal = () => {
+  setShowPreviewModal(false);
+  if (recordedVideoUrl) {
+    URL.revokeObjectURL(recordedVideoUrl);
+    setRecordedVideoUrl(null);
+  }
+  setRecordedChunks([]);
+};
 
   const isCallButtonDisabled = () => {
     const targetUser = registeredUsers.find(u => u.socketId === idToCall);
@@ -62,6 +277,7 @@ const VideoCall: React.FC = () => {
 
   const playOutgoingRingtone = () => {
     console.log('playing outgoing ringtone');
+    // Always create a new instance to ensure fresh state
     if (outgoingRingtoneRef.current) {
       outgoingRingtoneRef.current.pause();
       outgoingRingtoneRef.current.currentTime = 0;
@@ -90,7 +306,7 @@ const VideoCall: React.FC = () => {
   };
 
   const playIncomingRingtone = () => {
-    stopIncomingRingtone();
+    stopIncomingRingtone(); // <-- Add this to prevent stacking
   
     if (typeof window !== 'undefined' && window.AudioContext) {
       if (!audioContextRef.current) {
@@ -123,7 +339,10 @@ const VideoCall: React.FC = () => {
     }
   };
   
+  
+
   const stopIncomingRingtone = () => {
+    // Stop Web Audio version
     if (incomingRingtoneWebRef.current) {
       try {
         incomingRingtoneWebRef.current.stop();
@@ -134,6 +353,7 @@ const VideoCall: React.FC = () => {
       incomingRingtoneWebRef.current = null;
     }
   
+    // Stop HTML Audio fallback
     if (incomingRingtoneHTMLRef.current) {
       try {
         incomingRingtoneHTMLRef.current.pause();
@@ -146,7 +366,6 @@ const VideoCall: React.FC = () => {
   };
 
   const resetCallState = () => {
-    console.log('resetting call state');
     setCallAccepted(false);
     setReceivingCall(false);
     setCallingStatus("");
@@ -154,9 +373,9 @@ const VideoCall: React.FC = () => {
     setCallerSignal(null);
     setNeedsUserInteraction(false);
     
+    // Stop all ringtones
     stopOutgoingRingtone();
     stopIncomingRingtone();
-    stopScreenRecording();
     
     if (connectionRef.current) {
       connectionRef.current.destroy();
@@ -166,208 +385,9 @@ const VideoCall: React.FC = () => {
     if (userVideo.current) {
       userVideo.current.srcObject = null;
     }
-        // Clean up any previous recording URL
-    if (recordedVideoUrl) {
-      URL.revokeObjectURL(recordedVideoUrl);
-      setRecordedVideoUrl(null);
-    }
   };
 
-  const animationFrameRef = useRef<number | null>(null);
-
-  const startScreenRecording = async () => {
-    try {
-      setIsRecording(true);
-      setError(null);
-  
-      // Get screen stream
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          displaySurface: 'monitor',
-          frameRate: { ideal: 30 }
-        },
-        audio: true
-      }).catch(err => {
-        throw new Error(`Screen sharing denied: ${err.message}`);
-      });
-  
-      // Get camera stream
-      const cameraStream = stream;
-      if (!cameraStream) {
-        screenStream.getTracks().forEach(track => track.stop());
-        throw new Error("Camera stream not available");
-      }
-  
-      // Create canvas for compositing
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        screenStream.getTracks().forEach(track => track.stop());
-        throw new Error("Could not get canvas context");
-      }
-  
-      // Create video elements
-      const screenVideo = document.createElement('video');
-      const cameraVideo = document.createElement('video');
-      screenVideo.srcObject = screenStream;
-      cameraVideo.srcObject = cameraStream;
-      screenVideo.play().catch(console.error);
-      cameraVideo.play().catch(console.error);
-  
-      // Wait for metadata
-      await new Promise((resolve) => {
-        screenVideo.onloadedmetadata = resolve;
-      });
-      await new Promise((resolve) => {
-        cameraVideo.onloadedmetadata = resolve;
-      });
-  
-      // Set canvas dimensions
-      canvas.width = screenVideo.videoWidth;
-      canvas.height = screenVideo.videoHeight;
-  
-      // Calculate PIP size
-      const pipWidth = Math.floor(canvas.width / 4);
-      const pipHeight = Math.floor((cameraVideo.videoHeight / cameraVideo.videoWidth) * pipWidth);
-      const pipX = canvas.width - pipWidth - 20;
-      const pipY = canvas.height - pipHeight - 20;
-  
-      // Draw initial frame
-      ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
-      ctx.drawImage(cameraVideo, pipX, pipY, pipWidth, pipHeight);
-  
-      // Create canvas stream
-      const canvasStream = canvas.captureStream(30);
-      
-      // Add audio
-      const audioTracks = screenStream.getAudioTracks();
-      if (audioTracks.length > 0) {
-        canvasStream.addTrack(audioTracks[0]);
-      }
-  
-      // Create recorder
-      const options = {
-        mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') 
-          ? 'video/webm;codecs=vp9,opus'
-          : 'video/webm'
-      };
-  
-      const mediaRecorder = new MediaRecorder(canvasStream, options);
-      mediaRecorderRef.current = mediaRecorder;
-      const chunks: Blob[] = [];
-  
-      // Draw loop
-      const drawFrame = () => {
-        if (!isRecording) return;
-        
-        try {
-          ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
-          ctx.drawImage(cameraVideo, pipX, pipY, pipWidth, pipHeight);
-          animationFrameRef.current = requestAnimationFrame(drawFrame);
-        } catch (err) {
-          console.error("Drawing error:", err);
-        }
-      };
-  
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunks.push(event.data);
-        }
-      };
-  
-      mediaRecorder.onstop = () => {
-        // Cancel animation frame
-        if (animationFrameRef.current) {
-          cancelAnimationFrame(animationFrameRef.current);
-          animationFrameRef.current = null;
-        }
-  
-        const blob = new Blob(chunks, { type: options.mimeType });
-        const url = URL.createObjectURL(blob);
-        setRecordedVideoUrl(url);
-        setIsRecording(false);
-        
-        // Clean up
-        screenStream.getTracks().forEach(track => track.stop());
-        screenVideo.remove();
-        cameraVideo.remove();
-      };
-  
-      // Start drawing
-      animationFrameRef.current = requestAnimationFrame(drawFrame);
-      
-      // Start recording
-      mediaRecorder.start(100); // 100ms timeslice
-  
-      // Handle screen sharing stop
-      screenStream.getVideoTracks()[0].onended = () => {
-        stopScreenRecording();
-      };
-  
-    } catch (err) {
-      console.error("Recording error:", err);
-      setError(err.message);
-      setIsRecording(false);
-    }
-  };
-  
-  const stopScreenRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      // Request final data
-      mediaRecorderRef.current.requestData();
-      
-      // Stop the recorder (this will trigger onstop)
-      mediaRecorderRef.current.stop();
-      
-      // Stop all tracks from the recording stream
-      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
-      
-      // Cancel animation frame if exists
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-      
-      // Update state immediately
-      setIsRecording(false);
-    }
-  };
-  
-  // Add cleanup in useEffect
-  useEffect(() => {
-    return () => {
-      // Clean up animation frame on unmount
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      stopScreenRecording();
-    };
-  }, []);
-
-  const downloadRecording = () => {
-    if (recordedVideoUrl) {
-      const a = document.createElement('a');
-      a.href = recordedVideoUrl;
-      a.download = `video-call-recording-${new Date().toISOString()}.webm`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }
-  };
-
-  const toggleRecording = () => {
-    if (isRecording) {
-      stopScreenRecording();
-    } else {
-      // Clean up previous recording
-      if (recordedVideoUrl) {
-        URL.revokeObjectURL(recordedVideoUrl);
-        setRecordedVideoUrl(null);
-      }
-      startScreenRecording();
-    }
-  };
-
+  // Initialize media stream
   useEffect(() => {
     const setupMedia = async () => {
       try {
@@ -402,12 +422,10 @@ const VideoCall: React.FC = () => {
         stream.getTracks().forEach((track) => track.stop());
       }
       resetCallState();
-      if (recordedVideoUrl) {
-        URL.revokeObjectURL(recordedVideoUrl);
-      }
     };
   }, []);
 
+  // Mobile audio workaround
   useEffect(() => {
     if (receivingCall) {
       const handleUserInteraction = () => {
@@ -445,84 +463,7 @@ const VideoCall: React.FC = () => {
     }
   }, [callAccepted]);
 
-  useEffect(() => {
-    socket.on("connect", () => {
-      console.log("Connected with ID:", socket.id);
-      setMe(socket.id);
-    });
-
-    socket.on("registered", (users: RegisteredUser[]) => {
-      setIsRegistered(true);
-      setRegisteredUsers(users);
-    });
-
-    socket.on("user-registered", (user: RegisteredUser) => {
-      setRegisteredUsers(prev => [...prev, user]);
-    });
-
-    socket.on("user-unregistered", (socketId: string) => {
-      setRegisteredUsers(prev => prev.filter(u => u.socketId !== socketId));
-    });
-
-    socket.on("users-updated", (users: RegisteredUser[]) => {
-      setRegisteredUsers(users);
-    });
-
-    socket.on("connect_error", (err) => {
-      console.error("Connection error:", err);
-      setError("Connection failed. Please check your network.");
-    });
-
-    socket.on("call-made", ({ from, signal, customId: callerCustomId }) => {
-      if (!callAccepted && !callingStatus) {
-        setReceivingCall(true);
-        setCaller(from);
-        setCallerSignal(signal);
-        setError(`${callerCustomId} is calling you...`);
-        playIncomingRingtone();
-      }
-    });
-
-    socket.on("call-answered", (signal: SignalData) => {
-      setCallAccepted(true);
-      setCallingStatus("");
-      stopOutgoingRingtone();
-      if (connectionRef.current) {
-        connectionRef.current.signal(signal);
-      }
-    });
-
-    socket.on("call-rejected", () => {
-      setCallingStatus("Call was rejected");
-      stopOutgoingRingtone();
-      setTimeout(() => resetCallState(), 2000);
-    });
-
-    socket.on("call-ended", () => {
-      resetCallState();
-    });
-
-    socket.on("registration-error", (message: string) => {
-      setError(message);
-    });
-
-    return () => {
-      stopOutgoingRingtone();
-      stopIncomingRingtone();
-      socket.off("connect");
-      socket.off("registered");
-      socket.off("user-registered");
-      socket.off("user-unregistered");
-      socket.off("users-updated");
-      socket.off("connect_error");
-      socket.off("call-made");
-      socket.off("call-answered");
-      socket.off("call-rejected");
-      socket.off("call-ended");
-      socket.off("registration-error");
-    };
-  }, []);
-
+  // Media control functions
   const toggleMute = () => {
     if (stream) {
       const audioTracks = stream.getAudioTracks();
@@ -585,6 +526,7 @@ const VideoCall: React.FC = () => {
     }
   };
 
+  // User registration
   const registerUser = () => {
     if (!customId.trim()) {
       setError("Please enter a custom ID");
@@ -594,6 +536,7 @@ const VideoCall: React.FC = () => {
     socket.emit("register", customId);
   };
 
+  // Call management
   const callUser = (id: string) => {
     resetCallState();
   
@@ -605,6 +548,7 @@ const VideoCall: React.FC = () => {
     const targetUser = registeredUsers.find(u => u.socketId === id);
     setCallingStatus(`Calling ${targetUser?.customId || id.slice(0, 6)}...`);
     
+    // Start the ringtone after state is reset
     playOutgoingRingtone();
     
     const peer = new Peer({
@@ -655,6 +599,7 @@ const VideoCall: React.FC = () => {
   };
 
   const answerCall = () => {
+    // Prevent ringtone from restarting
     setReceivingCall(false);
     stopIncomingRingtone();
   
@@ -697,51 +642,51 @@ const VideoCall: React.FC = () => {
     peer.signal(callerSignal);
     connectionRef.current = peer;
   };
+  
 
   const rejectCall = () => {
-    stopIncomingRingtone();
     socket.emit("reject-call", { to: caller });
     resetCallState();
   };
-
+  
   const endCall = () => {
-    stopScreenRecording();
     socket.emit("end-call");
     resetCallState();
   };
+  
 
   return (
-    <div className="p-4 max-w-md mx-auto">
-      <h1 className="text-xl font-bold mb-2">Video Calling App</h1>
-      
+    <div className="max-w-4xl mx-auto p-6">
+      <h1 className="text-2xl font-bold text-gray-800 mb-4">🎥 Video Calling App</h1>
+  
       {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-          {error}
-          <button onClick={() => setError(null)} className="float-right font-bold">×</button>
+        <div className="flex items-center justify-between bg-red-100 text-red-800 border border-red-300 px-4 py-3 rounded mb-4">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="text-lg font-bold">×</button>
         </div>
       )}
-
+  
       {callingStatus && (
-        <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4">
-          {callingStatus}
-          <button onClick={endCall} className="float-right font-bold">×</button>
+        <div className="flex items-center justify-between bg-blue-100 text-blue-800 border border-blue-300 px-4 py-3 rounded mb-4">
+          <span>{callingStatus}</span>
+          <button onClick={endCall} className="text-lg font-bold">×</button>
         </div>
       )}
-
+  
       {!isRegistered ? (
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold mb-2">Register Your ID</h2>
-          <div className="flex space-x-2">
+        <div className="mb-6">
+          <h2 className="text-lg font-semibold mb-2">Register Your username</h2>
+          <div className="flex gap-2">
             <input
               type="text"
-              placeholder="Enter your custom ID"
+              placeholder="Enter your username"
               value={customId}
               onChange={(e) => setCustomId(e.target.value)}
-              className="border p-2 rounded flex-1"
+              className="border border-gray-300 p-2 rounded flex-1"
             />
             <button 
               onClick={registerUser} 
-              className="bg-blue-500 text-white px-4 py-2 rounded"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition"
             >
               Register
             </button>
@@ -749,90 +694,47 @@ const VideoCall: React.FC = () => {
         </div>
       ) : (
         <>
-          <div className="flex gap-4 mb-4">
-            <div className="relative">
+          {/* VIDEO SECTION */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            {/* Your Video */}
+            <div className="relative rounded overflow-hidden shadow-lg bg-black aspect-video">
               <video 
-                playsInline 
-                muted={true}
-                ref={myVideo} 
-                autoPlay 
-                className="w-full rounded-lg border border-gray-300"
-                style={{ 
-                  maxWidth: "200px",
-                  display: "block",
-                  transform: "scaleX(-1)",
-                  backgroundColor: !isVideoOn ? "black" : "transparent"
-                }}
+                ref={myVideo}
+                playsInline
+                muted
+                autoPlay
+                className="w-full h-full object-cover transform scale-x-[-1]"
+                style={{ backgroundColor: !isVideoOn ? "black" : "transparent" }}
               />
               <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
                 You
               </div>
               <div className="absolute top-2 left-2 flex gap-2">
-                <button 
+                {/* Mute Button */}
+                <button
                   onClick={toggleMute}
-                  className={`bg-black bg-opacity-50 text-white p-2 rounded-full ${isMuted ? 'bg-red-500' : ''}`}
-                  title={isMuted ? "Unmute microphone" : "Mute microphone"}
+                  className={`p-2 rounded-full ${isMuted ? 'bg-red-600' : 'bg-white bg-opacity-30'} text-white hover:scale-105 transition`}
                 >
-                  {isMuted ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" clipRule="evenodd" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                    </svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                    </svg>
-                  )}
+                  {/* Microphone Icon */}
                 </button>
-                <button 
+                {/* Camera Button */}
+                <button
                   onClick={toggleVideo}
-                  className={`bg-black bg-opacity-50 text-white p-2 rounded-full ${!isVideoOn ? 'bg-red-500' : ''}`}
-                  title={isVideoOn ? "Turn off camera" : "Turn on camera"}
+                  className={`p-2 rounded-full ${!isVideoOn ? 'bg-red-600' : 'bg-white bg-opacity-30'} text-white hover:scale-105 transition`}
                 >
-                  {isVideoOn ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                    </svg>
-                  )}
+                  {/* Camera Icon */}
                 </button>
               </div>
-              {callAccepted && (
-                <div className="absolute top-2 right-2">
-                  <button 
-                    onClick={toggleRecording}
-                    className={`bg-black bg-opacity-50 text-white p-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : ''}`}
-                    title={isRecording ? "Stop recording" : "Start recording"}
-                  >
-                    {isRecording ? (
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-                      </svg>
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              )}
             </div>
-            <div className="relative">
+  
+            {/* Remote Video */}
+            <div className="relative rounded overflow-hidden shadow-lg bg-black aspect-video">
               <video 
-                playsInline 
-                ref={userVideo} 
-                autoPlay 
-                className="w-full rounded-lg border border-gray-300"
-                style={{ 
-                  maxWidth: "200px", 
-                  display: callAccepted ? "block" : "none",
-                  backgroundColor: callAccepted ? "transparent" : "black"
-                }}
+                ref={userVideo}
+                playsInline
+                autoPlay
+                className={`w-full h-full object-cover ${!callAccepted ? 'hidden' : ''}`}
+                style={{ backgroundColor: callAccepted ? "transparent" : "black" }}
               />
               {callAccepted && (
                 <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
@@ -841,136 +743,137 @@ const VideoCall: React.FC = () => {
               )}
             </div>
           </div>
-
-          <div className="mb-4">
-            <h2 className="text-lg font-semibold mb-2">Available Users</h2>
-            <ul className="max-h-40 overflow-y-auto border rounded p-2">
-              {registeredUsers.filter(u => u.socketId !== me).map(user => {
-                const isInCallWithMe = user.inCallWith === me;
-                const isInCallWithSomeoneElse = user.inCall && !isInCallWithMe;
-                
-                return (
-                  <li 
-                    key={user.socketId} 
-                    className={`p-2 ${isInCallWithSomeoneElse ? 'bg-gray-100 opacity-50' : 'hover:bg-gray-100'} cursor-pointer flex justify-between items-center`}
-                    onClick={() => !isInCallWithSomeoneElse && setIdToCall(user.socketId)}
-                    title={isInCallWithSomeoneElse ? "User is in another call" : ""}
-                  >
-                    <div className="flex items-center">
-                      <span>{user.customId}</span>
-                      {isInCallWithMe && (
-                        <span className="ml-2 text-xs text-green-500">(In call with you)</span>
-                      )}
-                      {isInCallWithSomeoneElse && (
-                        <span className="ml-2 text-xs text-red-500">(In call)</span>
-                      )}
-                    </div>
-                    <span className="text-xs text-gray-500">({user.socketId.slice(0, 6)})</span>
-                  </li>
-                );
-              })}
-            </ul>
+  
+          {/* RECORDING BUTTON */}
+          <div className="flex gap-2 mb-6">
+            {!isRecording ? (
+              <button
+                onClick={startRecording}
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded w-full transition"
+              >
+                Start Recording
+              </button>
+            ) : (
+              <button
+                onClick={stopRecording}
+                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded w-full transition"
+              >
+                Stop Recording
+              </button>
+            )}
           </div>
+  
+          {/* USERS LIST */}
+          <div className="mb-6">
+            <h2 className="text-lg font-semibold mb-2">Available Users</h2>
+            {registeredUsers.filter(u => u.socketId !== me).length > 0 ? (
+              <ul className="max-h-40 overflow-y-auto border rounded-lg divide-y">
+                {registeredUsers.filter(u => u.socketId !== me).map(user => {
+                  const isInCallWithMe = user.inCallWith === me;
+                  const isInCallWithSomeoneElse = user.inCall && !isInCallWithMe;
 
-          <div className="mt-4">
-            <p className="mb-2">Your ID: <span className="font-semibold">{customId}</span> <span className="text-xs text-gray-500">({me.slice(0, 6)})</span></p>
-            <div className="flex flex-col space-y-2">
+                  return (
+                    <li
+                      key={user.socketId}
+                      className={`p-2 flex justify-between items-center text-sm cursor-pointer ${isInCallWithSomeoneElse ? 'text-gray-400 bg-gray-50' : 'hover:bg-gray-100'}`}
+                      onClick={() => !isInCallWithSomeoneElse && setIdToCall(user.socketId)}
+                      title={isInCallWithSomeoneElse ? "User is in another call" : ""}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span>{user.customId}</span>
+                        {isInCallWithMe && <span className="text-green-500 text-xs">(in call)</span>}
+                        {isInCallWithSomeoneElse && <span className="text-red-400 text-xs">(busy)</span>}
+                      </div>
+                      <span className="text-gray-500">{user.socketId.slice(0, 6)}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <div className="text-sm text-gray-500 border rounded-lg p-4 bg-gray-50">
+                No available users
+              </div>
+            )}
+          </div>
+  
+          {/* CALL CONTROLS */}
+          <div className="mb-6">
+              <p className="mb-1 text-sm">You: <span className="font-semibold">{customId}</span>
+                {/* <span className="text-gray-500">({me.slice(0, 6)})</span> */}
+              </p>
+            <div className="flex flex-col md:flex-row gap-2 mt-2">
               <input
                 type="text"
                 placeholder="Enter ID to call"
                 value={idToCall}
                 onChange={(e) => setIdToCall(e.target.value)}
-                className="border p-2 rounded"
+                className="border p-2 rounded flex-1"
                 disabled={callAccepted || callingStatus !== "" || receivingCall}
               />
-              <div className="flex space-x-2">
-                {!callAccepted && !receivingCall ? (
-                  <button 
-                    onClick={() => callUser(idToCall)} 
-                    className="bg-blue-500 text-white px-4 py-2 rounded flex-1 disabled:bg-blue-300"
-                    disabled={isCallButtonDisabled()}
-                  >
-                    Call
-                  </button>
-                ) : (
-                  <button 
-                    onClick={endCall} 
-                    className="bg-red-500 text-white px-4 py-2 rounded flex-1"
-                  >
-                    End Call
-                  </button>
-                )}
-              </div>
+              {!callAccepted && !receivingCall ? (
+                <button 
+                  onClick={() => callUser(idToCall)} 
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded w-full md:w-auto transition disabled:bg-blue-300"
+                  disabled={isCallButtonDisabled()}
+                >
+                  Call
+                </button>
+              ) : (
+                <button 
+                  onClick={endCall}
+                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded w-full md:w-auto transition"
+                >
+                  End Call
+                </button>
+              )}
             </div>
           </div>
-
+  
+          {/* INCOMING CALL UI */}
           {receivingCall && !callAccepted && (
-            <div className="mt-4 p-3 bg-gray-100 rounded">
-              <p className="mb-2">{registeredUsers.find(u => u.socketId === caller)?.customId || caller.slice(0, 6)} is calling...</p>
+            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded mb-6">
+              <p className="mb-2 font-medium">{registeredUsers.find(u => u.socketId === caller)?.customId || caller.slice(0, 6)} is calling...</p>
+  
               {needsUserInteraction && (
-                <div className="mb-2 p-2 bg-yellow-100 rounded">
-                  <p className="text-sm">Tap the button below to enable call audio:</p>
-                  <button 
+                <div className="mb-3 bg-yellow-100 p-2 rounded">
+                  <p className="text-sm">Tap below to enable call audio:</p>
+                  <button
                     onClick={() => {
                       playIncomingRingtone();
                       setNeedsUserInteraction(false);
                     }}
-                    className="bg-blue-500 text-white px-4 py-2 rounded mt-2 w-full"
+                    className="mt-2 bg-blue-500 text-white px-4 py-2 rounded w-full"
                   >
                     Enable Sound
                   </button>
                 </div>
               )}
-              <div className="flex space-x-2">
-                <button 
-                  onClick={answerCall} 
-                  className="bg-green-500 text-white px-4 py-2 rounded flex-1"
-                >
-                  Answer
-                </button>
-                <button 
-                  onClick={rejectCall} 
-                  className="bg-red-500 text-white px-4 py-2 rounded flex-1"
-                >
-                  Decline
-                </button>
+  
+              <div className="flex gap-2">
+                <button onClick={answerCall} className="bg-green-600 text-white px-4 py-2 rounded w-full">Answer</button>
+                <button onClick={rejectCall} className="bg-red-600 text-white px-4 py-2 rounded w-full">Decline</button>
               </div>
             </div>
           )}
-
-
-{recordedVideoUrl && (
-  <div className="mt-4 p-3 bg-gray-100 rounded">
-    <h3 className="font-semibold mb-2">Recording Preview</h3>
-    <video
-      controls
-      autoPlay
-      playsInline
-      src={recordedVideoUrl}
-      className="w-full rounded mb-2"
-      onCanPlay={(e) => {
-        e.currentTarget.play().catch(e => console.log("Play error:", e));
-      }}
-      onError={(e) => {
-        console.error("Video error:", e.currentTarget.error);
-        setError("Failed to play recording preview");
-      }}
-    />
-    <div className="flex justify-end">
-      <button 
-        onClick={downloadRecording}
-        className="bg-blue-500 text-white px-4 py-2 rounded"
-      >
-        Download Recording
-      </button>
-    </div>
-  </div>
-)}
-
+  
+          {/* RECORDING PREVIEW MODAL */}
+          {showPreviewModal && recordedVideoUrl && (
+            <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-2xl">
+                <h2 className="text-xl font-bold mb-4">Recording Preview</h2>
+                <video controls src={recordedVideoUrl} className="w-full rounded mb-4" autoPlay />
+                <div className="flex justify-end gap-2">
+                  <button onClick={closePreviewModal} className="bg-gray-500 text-white px-4 py-2 rounded">Cancel</button>
+                  <button onClick={downloadRecording} className="bg-blue-600 text-white px-4 py-2 rounded">Download</button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
   );
+  
 };
 
 export default VideoCall;
