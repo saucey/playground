@@ -58,6 +58,7 @@ const [showPreviewModal, setShowPreviewModal] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   
   useEffect(() => {
+    alert(process.env.NODE_ENV)
     const newSocket = io(SOCKET_URL, {
       transports: ["websocket", "polling"], // Fallback to polling if WS fails
       reconnectionAttempts: 5,
