@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 
-const SOCKET_URL = process.env.NODE_ENV === 'development' 
+const SOCKET_URL = process.env.SOCKET === 'local' 
   ? "http://localhost:5555"
   : "wss://video-call.devonauts.co.uk";
 
@@ -58,8 +58,8 @@ const [showPreviewModal, setShowPreviewModal] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   
   useEffect(() => {
-    console.log(process.env.NODE_ENV)
-    const newSocket = io("wss://video-call.devonauts.co.uk", {
+    console.log(process.env.SOCKET)
+    const newSocket = io(SOCKET_URL, {
       transports: ["websocket", "polling"], // Fallback to polling if WS fails
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
