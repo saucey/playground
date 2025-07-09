@@ -48,10 +48,7 @@ const [isRecording, setIsRecording] = useState(false);
 const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
 const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
 const [showPreviewModal, setShowPreviewModal] = useState(false);
-const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-
-const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
-const [isFlippingCamera, setIsFlippingCamera] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   
   useEffect(() => {
     console.log(process.env.NEXT_PUBLIC_SOCKET_ENV)
@@ -152,56 +149,8 @@ const [isFlippingCamera, setIsFlippingCamera] = useState(false);
     socket.off("call-ended");
     socket.off("registration-error");
   };
-  }, [socket]);
-  
-const flipCamera = async () => {
-  if (!stream || isFlippingCamera) return;
-  
-  setIsFlippingCamera(true);
-  
-  try {
-    // Stop existing tracks
-    stream.getTracks().forEach(track => track.stop());
-    
-    // Get new media with opposite facing mode
-    const newFacingMode = facingMode === "user" ? "environment" : "user";
-    const newStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: newFacingMode },
-      audio: true,
-    });
-    
-    // Update state and video element
-    setStream(newStream);
-    setFacingMode(newFacingMode);
-    
-    if (myVideo.current) {
-      myVideo.current.srcObject = newStream;
-    }
-    
-    // Update the peer connection with new stream
-    if (connectionRef.current) {
-      const videoTrack = newStream.getVideoTracks()[0];
-      const audioTrack = newStream.getAudioTracks()[0];
-      
-      connectionRef.current.replaceTrack(
-        stream.getVideoTracks()[0],
-        videoTrack,
-        newStream
-      );
-      
-      connectionRef.current.replaceTrack(
-        stream.getAudioTracks()[0],
-        audioTrack,
-        newStream
-      );
-    }
-  } catch (err) {
-    console.error("Error flipping camera:", err);
-    setError("Could not switch camera. Please check permissions.");
-  } finally {
-    setIsFlippingCamera(false);
-  }
-};
+}, [socket]);
+
 // Update the startRecording function to only record the screen
 const startRecording = async () => {
   try {
@@ -779,7 +728,6 @@ const closePreviewModal = () => {
                     </svg>
                   )}
                 </button>
-                
                 <button 
                   onClick={toggleVideo}
                   className={`bg-black bg-opacity-50 text-white p-2 rounded-full ${!isVideoOn ? 'bg-red-500' : ''}`}
@@ -795,17 +743,6 @@ const closePreviewModal = () => {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
                     </svg>
                   )}
-                </button>
-                
-                <button 
-                  onClick={flipCamera}
-                  className="bg-black bg-opacity-50 text-white p-2 rounded-full"
-                  title="Flip camera"
-                  disabled={isFlippingCamera}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
-                  </svg>
                 </button>
               </div>
             </div>
