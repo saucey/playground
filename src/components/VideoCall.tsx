@@ -7,13 +7,6 @@ const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_ENV === 'local'
   ? "http://localhost:5555"
   : "wss://video-call.devonauts.co.uk";
 
-// const socket: Socket = io("http://localhost:5555", {
-//   transports: ["websocket"],
-//   reconnectionAttempts: 5,
-//   reconnectionDelay: 1000,
-//   autoConnect: true, // Make sure this is true
-// });
-
 // Ringtone audio files
 const RINGTONE_OUTGOING = "/mixkit-happy-bells-notification-937.mp3";
 const RINGTONE_INCOMING = "/mixkit-happy-bells-notification-937.mp3";
@@ -657,7 +650,7 @@ const closePreviewModal = () => {
 
   return (
     <div className="max-w-4xl mx-auto p-6">
-      <h1 className="text-2xl font-bold text-gray-800 mb-4">🎥 Video Calling App</h1>
+      {/* <h1 className="text-2xl font-bold text-gray-800 mb-4">🎥 Video Calling App</h1> */}
   
       {error && (
         <div className="flex items-center justify-between bg-red-100 text-red-800 border border-red-300 px-4 py-3 rounded mb-4">
@@ -673,26 +666,35 @@ const closePreviewModal = () => {
         </div>
       )}
   
-      {!isRegistered ? (
-        <div className="mb-6">
-          <h2 className="text-lg font-semibold mb-2">Register Your username</h2>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="Enter your username"
-              value={customId}
-              onChange={(e) => setCustomId(e.target.value)}
-              className="border border-gray-300 p-2 rounded flex-1"
-            />
-            <button 
-              onClick={registerUser} 
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition"
-            >
-              Register
-            </button>
-          </div>
+  {!isRegistered ? (
+  <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
+    <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-md">
+      <h2 className="text-2xl font-bold text-center mb-10 text-gray-700">Welcome to Video Call</h2>
+      <div className="space-y-4">
+        <div>
+          <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-1">
+            Choose your username
+          </label>
+          <input
+            id="username"
+            type="text"
+            placeholder="Enter your username"
+            value={customId}
+            onChange={(e) => setCustomId(e.target.value)}
+            className="w-full px-4 py-3 text-lg border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            autoFocus
+          />
         </div>
-        ) : (
+        <button 
+          onClick={registerUser} 
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-lg font-medium transition-colors"
+        >
+          Join Call
+        </button>
+      </div>
+    </div>
+  </div>
+) : (
         <>
           {/* VIDEO SECTION */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
