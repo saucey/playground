@@ -86,17 +86,10 @@ const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     console.log("Connected with ID:", socket.id);
     setMe(socket.id);
   });
-    
-  socket.on("registered", (users: RegisteredUser[]) => {
-    console.log('Full user list received', users);
-    setIsRegistered(true);
-    setRegisteredUsers(users);
-  });
   
   // For individual user registrations
   socket.on("user-registered", (user: RegisteredUser) => {
-    console.log('New user registered:', user);
-    
+    setIsRegistered(true);
     // Update user list without duplicates
     setRegisteredUsers(prev => {
       // Check if user already exists
@@ -116,7 +109,7 @@ const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   
   socket.on("users-updated", (users: RegisteredUser[]) => {
     setRegisteredUsers(users);
-    console.log(registeredUsers, 'users-updated')
+    console.log(users, 'users-updated')
   });
 
   socket.on("connect_error", (err) => {
@@ -436,8 +429,17 @@ const closePreviewModal = () => {
     const setupMedia = async () => {
       try {
         const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user" },
-          audio: true,
+          video: { 
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 }
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
         });
         setStream(mediaStream);
   
