@@ -59,7 +59,7 @@ const [showPreviewModal, setShowPreviewModal] = useState(false);
   
   useEffect(() => {
     alert(process.env.NODE_ENV)
-    const newSocket = io(SOCKET_URL, {
+    const newSocket = io("wss://video-call.devonauts.co.uk", {
       transports: ["websocket", "polling"], // Fallback to polling if WS fails
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
