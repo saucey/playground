@@ -48,7 +48,7 @@ const [isRecording, setIsRecording] = useState(false);
 const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
 const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
 const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   
   useEffect(() => {
     console.log(process.env.NEXT_PUBLIC_SOCKET_ENV)
