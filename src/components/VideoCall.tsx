@@ -687,7 +687,7 @@ const closePreviewModal = () => {
                 </div>
                 <button 
                   onClick={registerUser} 
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-lg font-medium transition-colors"
+                  className="w-full bg-[#155dfc] hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-lg font-medium transition-colors"
                 >
                   Join Call
                 </button>
