@@ -2,17 +2,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
+import RegisterUsername from "./Register";
 
-// const SOCKET_URL = process.env.NODE_ENV === 'development' 
-//   ? "http://localhost:5555"
-//   : "wss://video-call.devonauts.co.uk";
-
-// const socket: Socket = io("http://localhost:5555", {
-//   transports: ["websocket"],
-//   reconnectionAttempts: 5,
-//   reconnectionDelay: 1000,
-//   autoConnect: true, // Make sure this is true
-// });
+const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_ENV === 'local' 
+  ? "http://localhost:5555"
+  : "wss://video-call.devonauts.co.uk";
 
 // Ringtone audio files
 const RINGTONE_OUTGOING = "/mixkit-happy-bells-notification-937.mp3";
@@ -55,10 +49,11 @@ const [isRecording, setIsRecording] = useState(false);
 const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
 const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
 const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   
   useEffect(() => {
-    const newSocket = io("http://localhost:5555", {
+    console.log(process.env.NEXT_PUBLIC_SOCKET_ENV)
+    const newSocket = io(SOCKET_URL, {
       transports: ["websocket", "polling"], // Fallback to polling if WS fails
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
@@ -656,7 +651,7 @@ const closePreviewModal = () => {
 
   return (
     <div className="max-w-4xl mx-auto p-6">
-      <h1 className="text-2xl font-bold text-gray-800 mb-4">🎥 Video Calling App</h1>
+      {/* <h1 className="text-2xl font-bold text-gray-800 mb-4">🎥 Video Calling App</h1> */}
   
       {error && (
         <div className="flex items-center justify-between bg-red-100 text-red-800 border border-red-300 px-4 py-3 rounded mb-4">
@@ -672,218 +667,68 @@ const closePreviewModal = () => {
         </div>
       )}
   
-      {!isRegistered ? (
-        <div className="mb-6">
-          <h2 className="text-lg font-semibold mb-2">Register Your username</h2>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="Enter your username"
-              value={customId}
-              onChange={(e) => setCustomId(e.target.value)}
-              className="border border-gray-300 p-2 rounded flex-1"
-            />
-            <button 
-              onClick={registerUser} 
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition"
-            >
-              Register
-            </button>
-          </div>
-        </div>
+        {!isRegistered ? (
+          <RegisterUsername registerUser={registerUser} customId={customId} setCustomId={setCustomId} />
         ) : (
         <>
-          {/* VIDEO SECTION */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            {/* Your Video */}
-            <div className="relative rounded overflow-hidden shadow-lg bg-black aspect-video">
-  <video 
-    ref={myVideo}
-    playsInline
-    muted
-    autoPlay
-    className="w-full h-full object-cover transform scale-x-[-1]"
-    style={{ backgroundColor: !isVideoOn ? "black" : "transparent" }}
-  />
-  <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
-    You
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mt-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mt-8">
+  {/* New Meeting */}
+  <div
+    onClick={() => console.log('Start New Meeting')}
+    className="flex flex-col items-center p-6 bg-white shadow-md rounded-xl cursor-pointer hover:bg-gray-50 transition"
+  >
+    <div className="bg-blue-100 text-blue-600 p-4 rounded-full mb-4">
+      {/* Replace with a real icon */}
+      <svg className="w-12 h-12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 16h8M8 12h8m-8-4h8M4 6h16M4 18h16" />
+      </svg>
+    </div>
+    <span className="text-lg font-semibold text-gray-700">New Meeting</span>
   </div>
-  <div className="absolute top-2 left-2 flex gap-2">
-    {/* Mute Button */}
-    <button
-      onClick={toggleMute}
-      className={`p-2 rounded-full ${isMuted ? 'bg-red-600' : 'bg-white bg-opacity-30'} text-white hover:scale-105 transition`}
-    >
-      {isMuted ? (
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" />
-        </svg>
-      ) : (
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" clipRule="evenodd" />
-        </svg>
-      )}
-    </button>
-    {/* Camera Button */}
-    <button
-      onClick={toggleVideo}
-      className={`p-2 rounded-full ${!isVideoOn ? 'bg-red-600' : 'bg-white bg-opacity-30'} text-white hover:scale-105 transition`}
-    >
-      {isVideoOn ? (
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-          <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
-        </svg>
-      ) : (
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586a1 1 0 01-.707-.293l-1.121-1.121A2 2 0 0011.172 3H8.828a2 2 0 00-1.414.586L6.293 4.707A1 1 0 015.586 5H4zm6 9a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
-        </svg>
-      )}
-    </button>
+
+  {/* Join Meeting */}
+  <div
+    onClick={() => console.log('Join Meeting')}
+    className="flex flex-col items-center p-6 bg-white shadow-md rounded-xl cursor-pointer hover:bg-gray-50 transition"
+  >
+    <div className="bg-green-100 text-green-600 p-4 rounded-full mb-4">
+      <svg className="w-12 h-12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16h6m2 4H7a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v12a2 2 0 01-2 2z" />
+      </svg>
+    </div>
+    <span className="text-lg font-semibold text-gray-700">Join Meeting</span>
+  </div>
+
+  {/* Record Screen */}
+  <div
+    onClick={() => console.log('Record Screen')}
+    className="flex flex-col items-center p-6 bg-white shadow-md rounded-xl cursor-pointer hover:bg-gray-50 transition"
+  >
+    <div className="bg-red-100 text-red-600 p-4 rounded-full mb-4">
+      <svg className="w-12 h-12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.36-6.36l-.71.71M6.34 17.66l-.7.7m12.02 0l-.7-.7M6.34 6.34l-.7-.7" />
+      </svg>
+    </div>
+    <span className="text-lg font-semibold text-gray-700">Record Screen</span>
+  </div>
+
+  {/* Call a User */}
+  <div
+    onClick={() => console.log('Call a User')}
+    className="flex flex-col items-center p-6 bg-white shadow-md rounded-xl cursor-pointer hover:bg-gray-50 transition"
+  >
+    <div className="bg-purple-100 text-purple-600 p-4 rounded-full mb-4">
+      <svg className="w-12 h-12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15 5a3 3 0 00-6 0v2a3 3 0 006 0V5zM6 10v10a1 1 0 001 1h10a1 1 0 001-1V10m-4 4h-4" />
+      </svg>
+    </div>
+    <span className="text-lg font-semibold text-gray-700">Call a User</span>
   </div>
 </div>
-  
-            {/* Remote Video */}
-            <div className="relative rounded overflow-hidden shadow-lg bg-black aspect-video">
-              <video 
-                ref={userVideo}
-                playsInline
-                autoPlay
-                className={`w-full h-full object-cover ${!callAccepted ? 'hidden' : ''}`}
-                style={{ backgroundColor: callAccepted ? "transparent" : "black" }}
-              />
-              {callAccepted && (
-                <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
-                  {registeredUsers.find(u => u.socketId === idToCall)?.customId || "Remote"}
-                </div>
-              )}
-            </div>
-          </div>
-  
-          {/* RECORDING BUTTON */}
-          <div className="flex gap-2 mb-6">
-            {!isRecording ? (
-              <button
-                onClick={startRecording}
-                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded w-full transition"
-              >
-                Start Recording
-              </button>
-            ) : (
-              <button
-                onClick={stopRecording}
-                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded w-full transition"
-              >
-                Stop Recording
-              </button>
-            )}
-          </div>
-  
-          {/* USERS LIST */}
-          <div className="mb-6">
-            <h2 className="text-lg font-semibold mb-2">Available Users</h2>
-            {registeredUsers.filter(u => u.socketId !== me).length > 0 ? (
-              <ul className="max-h-40 overflow-y-auto border rounded-lg divide-y">
-                {registeredUsers.filter(u => u.socketId !== me).map(user => {
-                  const isInCallWithMe = user.inCallWith === me;
-                  const isInCallWithSomeoneElse = user.inCall && !isInCallWithMe;
 
-                  return (
-                    <li
-                      key={user.socketId}
-                      className={`p-2 flex justify-between items-center text-sm cursor-pointer ${isInCallWithSomeoneElse ? 'text-gray-400 bg-gray-50' : 'hover:bg-gray-100'}`}
-                      onClick={() => !isInCallWithSomeoneElse && setIdToCall(user.socketId)}
-                      title={isInCallWithSomeoneElse ? "User is in another call" : ""}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>{user.customId}</span>
-                        {isInCallWithMe && <span className="text-green-500 text-xs">(in call)</span>}
-                        {isInCallWithSomeoneElse && <span className="text-red-400 text-xs">(busy)</span>}
-                      </div>
-                      <span className="text-gray-500">{user.socketId.slice(0, 6)}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <div className="text-sm text-gray-500 border rounded-lg p-4 bg-gray-50">
-                No available users
-              </div>
-            )}
           </div>
-  
-          {/* CALL CONTROLS */}
-          <div className="mb-6">
-              <p className="mb-1 text-sm">You: <span className="font-semibold">{customId}</span>
-                {/* <span className="text-gray-500">({me.slice(0, 6)})</span> */}
-              </p>
-            <div className="flex flex-col md:flex-row gap-2 mt-2">
-              <input
-                type="text"
-                placeholder="Enter ID to call"
-                value={idToCall}
-                onChange={(e) => setIdToCall(e.target.value)}
-                className="border p-2 rounded flex-1"
-                disabled={callAccepted || callingStatus !== "" || receivingCall}
-              />
-              {!callAccepted && !receivingCall ? (
-                <button 
-                  onClick={() => callUser(idToCall)} 
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded w-full md:w-auto transition disabled:bg-blue-300"
-                  disabled={isCallButtonDisabled()}
-                >
-                  Call
-                </button>
-              ) : (
-                <button 
-                  onClick={endCall}
-                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded w-full md:w-auto transition"
-                >
-                  End Call
-                </button>
-              )}
-            </div>
-          </div>
-  
-          {/* INCOMING CALL UI */}
-          {receivingCall && !callAccepted && (
-            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded mb-6">
-              <p className="mb-2 font-medium">{registeredUsers.find(u => u.socketId === caller)?.customId || caller.slice(0, 6)} is calling...</p>
-  
-              {needsUserInteraction && (
-                <div className="mb-3 bg-yellow-100 p-2 rounded">
-                  <p className="text-sm">Tap below to enable call audio:</p>
-                  <button
-                    onClick={() => {
-                      playIncomingRingtone();
-                      setNeedsUserInteraction(false);
-                    }}
-                    className="mt-2 bg-blue-500 text-white px-4 py-2 rounded w-full"
-                  >
-                    Enable Sound
-                  </button>
-                </div>
-              )}
-  
-              <div className="flex gap-2">
-                <button onClick={answerCall} className="bg-green-600 text-white px-4 py-2 rounded w-full">Answer</button>
-                <button onClick={rejectCall} className="bg-red-600 text-white px-4 py-2 rounded w-full">Decline</button>
-              </div>
-            </div>
-          )}
-  
-          {/* RECORDING PREVIEW MODAL */}
-          {showPreviewModal && recordedVideoUrl && (
-            <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-              <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-2xl">
-                <h2 className="text-xl font-bold mb-4">Recording Preview</h2>
-                <video controls src={recordedVideoUrl} className="w-full rounded mb-4" autoPlay />
-                <div className="flex justify-end gap-2">
-                  <button onClick={closePreviewModal} className="bg-gray-500 text-white px-4 py-2 rounded">Cancel</button>
-                  <button onClick={downloadRecording} className="bg-blue-600 text-white px-4 py-2 rounded">Download</button>
-                </div>
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>
