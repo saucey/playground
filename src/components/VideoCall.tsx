@@ -644,7 +644,6 @@ const closePreviewModal = () => {
     if (receivingCall) {
       const handleUserInteraction = () => {
         playIncomingRingtone();
-        alert("Incoming call");
         document.removeEventListener('click', handleUserInteraction);
         document.removeEventListener('touchstart', handleUserInteraction);
       };
