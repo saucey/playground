@@ -3,6 +3,14 @@ import React, { useEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 import RegisterUsername from "./Register";
+import ControlPanel from "./ControlPanel";
+import VideoCallArea from "./VideoCallArea";
+import ShowCallUserModal from "./showCallUserModal";
+import ShowJoinMeetingModal from "./ShowJoinMeetingModal";
+import ShowRecordScreenModal from "./ShowRecordScreenModal";
+import ShowNewMeetingModal from "./ShowNewMeetingModal";
+import AppCards from "./AppCards";
+import CallingStatus from "./CallingStatus";
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_ENV === 'local' 
   ? "http://localhost:5555"
@@ -19,14 +27,24 @@ interface RegisteredUser {
   inCallWith?: string;
 }
 
+interface MeetingRoom {
+  id: string;
+  name: string;
+  createdBy: string;
+  admin: string;
+  participants: string[];
+  createdAt: Date;
+}
+
 const VideoCall: React.FC = () => {
+
 const [showNewMeetingModal, setShowNewMeetingModal] = useState(false);
 const [showJoinMeetingModal, setShowJoinMeetingModal] = useState(false);
 const [showRecordScreenModal, setShowRecordScreenModal] = useState(false);
 const [showCallUserModal, setShowCallUserModal] = useState(false);
 
 const [showCallModal, setShowCallModal] = useState(false);
-  const [callTarget, setCallTarget] = useState<RegisteredUser | null>(null);
+const [callTarget, setCallTarget] = useState<RegisteredUser | null>(null);
   
   // Add this state for the welcome message
 const [welcomeMessage, setWelcomeMessage] = useState("");
@@ -62,6 +80,10 @@ const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
 const [showPreviewModal, setShowPreviewModal] = useState(false);
 const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   
+const [meetingRooms, setMeetingRooms] = useState<MeetingRoom[]>([]);
+const [currentRoom, setCurrentRoom] = useState<MeetingRoom | null>(null);
+const [showMeetingRooms, setShowMeetingRooms] = useState(false);
+  
   useEffect(() => {
     console.log(process.env.NEXT_PUBLIC_SOCKET_ENV)
     const newSocket = io(SOCKET_URL, {
@@ -79,7 +101,7 @@ const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   }, []);
 
 // Socket event listeners
-  useEffect(() => {
+useEffect(() => {
   if (!socket) return;
     
   socket.on("connect", () => {
@@ -175,6 +197,21 @@ const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     setError(message);
   });
 
+  socket.on("room-created", (room: MeetingRoom) => {
+    setMeetingRooms(prev => [...prev, room]);
+  });
+  
+  socket.on("rooms-updated", (rooms: MeetingRoom[]) => {
+    setMeetingRooms(rooms);
+  });
+  
+  socket.on("room-updated", (room: MeetingRoom) => {
+    setCurrentRoom(room);
+  });
+  
+  // Get existing rooms on load
+  socket.emit("get-rooms");
+
   return () => {
     stopOutgoingRingtone();
     stopIncomingRingtone();
@@ -189,8 +226,130 @@ const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     socket.off("call-rejected");
     socket.off("call-ended");
     socket.off("registration-error");
+    socket.off("room-created");
+    socket.off("rooms-updated");
+    socket.off("room-updated");
   };
 }, [socket]);
+  
+  // Create room handler
+const createMeetingRoom = (name: string) => {
+  if (socket) {
+    socket.emit("create-room", name);
+    setShowNewMeetingModal(false);
+  }
+};
+
+// Join room handler
+const joinRoom = (roomId: string) => {
+  if (socket) {
+    socket.emit("join-room", roomId);
+    setCurrentRoom(meetingRooms.find(r => r.id === roomId) || null);
+  }
+};
+
+// Leave room handler
+const leaveRoom = () => {
+  if (socket && currentRoom) {
+    socket.emit("leave-room", currentRoom.id);
+    setCurrentRoom(null);
+  }
+};
+
+// Render meeting room cards
+const renderMeetingRooms = () => (
+  <div className="mt-8">
+    <h2 className="text-xl font-bold mb-4">Active Meetings</h2>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {meetingRooms.map(room => {
+        const creator = registeredUsers.find(u => u.socketId === room.createdBy);
+        return (
+          <div 
+            key={room.id}
+            className="border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => joinRoom(room.id)}
+          >
+            <h3 className="font-semibold">{room.name}</h3>
+            <p className="text-sm text-gray-600">
+              Created by: {creator?.customId || "Unknown"}
+            </p>
+            <p className="text-sm">
+              Participants: {room.participants.length}
+            </p>
+            <p className="text-xs text-gray-500">
+              {new Date(room.createdAt).toLocaleTimeString()}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+);
+
+// Update the New Meeting modal to create rooms
+const NewMeetingModal = () => (
+  // ... existing modal structure ...
+  <form onSubmit={(e) => {
+    e.preventDefault();
+    const roomName = (e.target as any).elements['meeting-title'].value;
+    createMeetingRoom(roomName);
+  }}>
+    {/* ... form fields ... */}
+  </form>
+);
+
+// Add room view component
+const RoomView = () => (
+  <div className="fixed inset-0 bg-black z-50 flex flex-col">
+    <div className="p-4 bg-gray-800 text-white flex justify-between">
+      <h2 className="text-xl font-bold">{currentRoom?.name}</h2>
+      <button onClick={leaveRoom} className="text-red-500">Leave</button>
+    </div>
+    
+    <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
+      {/* Render local video */}
+      <div className="bg-black rounded-lg overflow-hidden">
+        <video
+          ref={myVideo}
+          autoPlay
+          playsInline
+          muted
+          className="w-full h-full object-cover"
+        />
+        <div className="absolute bottom-2 left-2 text-white bg-black bg-opacity-50 px-2 py-1 rounded">
+          You
+        </div>
+      </div>
+      
+      {/* Render remote participants */}
+      {currentRoom?.participants
+        .filter(id => id !== me)
+        .map(id => {
+          const user = registeredUsers.find(u => u.socketId === id);
+          return (
+            <div key={id} className="bg-black rounded-lg overflow-hidden">
+              <div className="w-full h-full flex items-center justify-center bg-gray-900">
+                <span className="text-white">
+                  {user?.customId || "Participant"}
+                </span>
+              </div>
+              <div className="absolute bottom-2 left-2 text-white bg-black bg-opacity-50 px-2 py-1 rounded">
+                {user?.customId || "Participant"}
+              </div>
+            </div>
+          );
+        })}
+    </div>
+    
+    {/* Controls */}
+    <div className="bg-gray-900 py-4 flex justify-center">
+      <div className="flex space-x-4">
+        {/* ... existing call controls ... */}
+      </div>
+    </div>
+  </div>
+);
+
 
 // Update the startRecording function to only record the screen
 const startRecording = async () => {
@@ -333,12 +492,6 @@ const closePreviewModal = () => {
       });
   };
   
-  const stopOutgoingRingtone = () => {
-    if (outgoingRingtoneRef.current) {
-      outgoingRingtoneRef.current.pause();
-      outgoingRingtoneRef.current.currentTime = 0;
-    }
-  };
 
   const playIncomingRingtone = () => {
     stopIncomingRingtone(); // <-- Add this to prevent stacking
@@ -374,7 +527,12 @@ const closePreviewModal = () => {
     }
   };
   
-  
+  const stopOutgoingRingtone = () => {
+    if (outgoingRingtoneRef.current) {
+      outgoingRingtoneRef.current.pause();
+      outgoingRingtoneRef.current.currentTime = 0;
+    }
+  };
 
   const stopIncomingRingtone = () => {
     // Stop Web Audio version
@@ -486,6 +644,7 @@ const closePreviewModal = () => {
     if (receivingCall) {
       const handleUserInteraction = () => {
         playIncomingRingtone();
+        alert("Incoming call");
         document.removeEventListener('click', handleUserInteraction);
         document.removeEventListener('touchstart', handleUserInteraction);
       };
@@ -743,11 +902,10 @@ const rejectCall = () => {
   setCallingStatus("");
 };
   
-  
-  const endCall = () => {
-    socket.emit("end-call");
-    resetCallState();
-  };
+const endCall = () => {
+  socket.emit("end-call");
+  resetCallState();
+};
 
   return (
   <div className="max-w-4xl mx-auto p-6">
@@ -758,446 +916,51 @@ const rejectCall = () => {
       </div>
     )}
 
-{isRegistered && welcomeMessage && (
-  <div className="text-center mb-6">
-    <h2 className="text-2xl font-bold text-gray-800">{welcomeMessage}</h2>
-    <p className="text-gray-600">Select an option below to get started</p>
-  </div>
-)}
-
-{callingStatus && (
-  <div className="flex items-center justify-between bg-blue-100 text-blue-800 border border-blue-300 px-4 py-3 rounded mb-4">
-    <span>{callingStatus}</span>
-    {receivingCall ? (
-      <div className="flex space-x-2">
-        <button 
-          onClick={rejectCall}
-          className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
-        >
-          Reject
-        </button>
-        <button 
-          onClick={answerCall}
-          className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600"
-        >
-          Answer
-        </button>
+    {isRegistered && welcomeMessage && (
+      <div className="text-center mb-6">
+        <h2 className="text-2xl font-bold text-gray-800">{welcomeMessage}</h2>
+        <p className="text-gray-600">Select an option below to get started</p>
       </div>
-    ) : (
-      <button onClick={endCall} className="text-lg font-bold">×</button>
     )}
-  </div>
-)}
+
+    {callingStatus && (
+      <CallingStatus receivingCall={receivingCall} callingStatus={callingStatus} endCall={endCall} rejectCall={rejectCall} answerCall={answerCall} />
+    )}
     {!isRegistered ? (
       <RegisterUsername registerUser={registerUser} customId={customId} setCustomId={setCustomId} />
     ) : (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
-        {/* New Meeting Card */}
-        <div 
-          onClick={() => setShowNewMeetingModal(true)}
-          className="flex flex-col items-center p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow cursor-pointer"
-        >
-          <div className="bg-blue-100 p-4 rounded-xl mb-4">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-medium text-gray-900">New Meeting</h3>
-        </div>
+      <AppCards setShowNewMeetingModal={setShowNewMeetingModal} setShowJoinMeetingModal={setShowJoinMeetingModal} setShowRecordScreenModal={setShowRecordScreenModal} setShowCallUserModal={setShowCallUserModal} />  
+    )}
 
-        {/* Join Meeting Card */}
-        <div 
-          onClick={() => setShowJoinMeetingModal(true)}
-          className="flex flex-col items-center p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow cursor-pointer"
-        >
-          <div className="bg-green-100 p-4 rounded-xl mb-4">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-medium text-gray-900">Join Meeting</h3>
-        </div>
+    {renderMeetingRooms()}
+  
+    {currentRoom && <RoomView />}
 
-        {/* Record Screen Card */}
-        <div 
-          onClick={() => setShowRecordScreenModal(true)}
-          className="flex flex-col items-center p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow cursor-pointer"
-        >
-          <div className="bg-purple-100 p-4 rounded-xl mb-4">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-medium text-gray-900">Record Screen</h3>
-        </div>
-
-        {/* Call a User Card */}
-        <div 
-          onClick={() => setShowCallUserModal(true)}
-          className="flex flex-col items-center p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow cursor-pointer"
-        >
-          <div className="bg-red-100 p-4 rounded-xl mb-4">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-medium text-gray-900">Call a User</h3>
-        </div>
-      </div>
-      )}
-      {showNewMeetingModal && (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-    <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-xl font-bold text-gray-900">New Meeting</h3>
-        <button 
-          onClick={() => setShowNewMeetingModal(false)}
-          className="text-gray-500 hover:text-gray-700"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-      <div className="mb-6">
-        <p className="text-gray-600">Create a new meeting and invite participants</p>
-        {/* Placeholder for meeting creation form */}
-        <div className="mt-4 p-4 bg-gray-100 rounded-lg">
-          <p className="text-gray-500">Meeting creation form will go here</p>
-        </div>
-      </div>
-      <div className="flex justify-end space-x-3">
-        <button
-          onClick={() => setShowNewMeetingModal(false)}
-          className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={() => {
-            console.log("New meeting created");
-            setShowNewMeetingModal(false);
-          }}
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-        >
-          Create Meeting
-        </button>
-      </div>
-    </div>
-  </div>
-)}
-
-{/* Join Meeting Modal */}
-{showJoinMeetingModal && (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-    <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-xl font-bold text-gray-900">Join Meeting</h3>
-        <button 
-          onClick={() => setShowJoinMeetingModal(false)}
-          className="text-gray-500 hover:text-gray-700"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-      <div className="mb-6">
-        <p className="text-gray-600">Enter the meeting ID to join</p>
-        <div className="mt-4">
-          <input
-            type="text"
-            placeholder="Meeting ID"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <input
-            type="text"
-            placeholder="Your name (optional)"
-            className="w-full mt-3 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-      </div>
-      <div className="flex justify-end space-x-3">
-        <button
-          onClick={() => setShowJoinMeetingModal(false)}
-          className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={() => {
-            console.log("Joining meeting");
-            setShowJoinMeetingModal(false);
-          }}
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-        >
-          Join
-        </button>
-      </div>
-    </div>
-  </div>
-)}
-
-{/* Record Screen Modal */}
-{showRecordScreenModal && (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-    <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-xl font-bold text-gray-900">Record Screen</h3>
-        <button 
-          onClick={() => setShowRecordScreenModal(false)}
-          className="text-gray-500 hover:text-gray-700"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-      <div className="mb-6">
-        <p className="text-gray-600">Record your screen, microphone, or both</p>
-        <div className="mt-4 space-y-3">
-          <div className="flex items-center">
-            <input type="checkbox" id="record-screen" className="h-4 w-4 text-blue-600 focus:ring-blue-500" defaultChecked />
-            <label htmlFor="record-screen" className="ml-2 text-gray-700">Screen</label>
-          </div>
-          <div className="flex items-center">
-            <input type="checkbox" id="record-audio" className="h-4 w-4 text-blue-600 focus:ring-blue-500" defaultChecked />
-            <label htmlFor="record-audio" className="ml-2 text-gray-700">Microphone</label>
-          </div>
-          <div className="flex items-center">
-            <input type="checkbox" id="record-camera" className="h-4 w-4 text-blue-600 focus:ring-blue-500" />
-            <label htmlFor="record-camera" className="ml-2 text-gray-700">Camera</label>
-          </div>
-        </div>
-      </div>
-      <div className="flex justify-end space-x-3">
-        <button
-          onClick={() => setShowRecordScreenModal(false)}
-          className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={() => {
-            startRecording();
-            setShowRecordScreenModal(false);
-          }}
-          className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
-        >
-          Start Recording
-        </button>
-      </div>
-    </div>
-  </div>
-)}
-
-{/* Call User Modal */}
-{showCallUserModal && (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-    <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-xl font-bold text-gray-900">Call a User</h3>
-        <button 
-          onClick={() => setShowCallUserModal(false)}
-          className="text-gray-500 hover:text-gray-700"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-      <div className="mb-6">
-        <p className="text-gray-600">Select a user to call from the list</p>
-        <div className="mt-4 max-h-60 overflow-y-auto">
-          {registeredUsers.length > 0 ? (
-            <ul className="divide-y divide-gray-200">
-              {registeredUsers
-                .filter(user => user.socketId !== me) // Filter out current user
-                .map(user => (
-                  <li key={user.socketId} className="py-3">
-                    <button
-                      onClick={() => {
-                        setIdToCall(user.socketId);
-                        callUser(user.socketId);
-                        setShowCallUserModal(false);
-                      }}
-                      className="w-full text-left hover:bg-gray-50 p-2 rounded flex items-center"
-                      disabled={user.inCall && user.inCallWith !== me}
-                    >
-                      <span className={`flex-1 ${user.inCall && user.inCallWith !== me ? 'text-gray-400' : 'text-gray-800'}`}>
-                        {user.customId || user.socketId.slice(0, 6)}
-                      </span>
-                      {user.inCall && user.inCallWith !== me && (
-                        <span className="text-xs text-gray-500">In call</span>
-                      )}
-                    </button>
-                  </li>
-                ))}
-            </ul>
-          ) : (
-            <p className="text-gray-500 text-center py-4">No other users available</p>
-          )}
-        </div>
-      </div>
-      <div className="flex justify-end">
-        <button
-          onClick={() => setShowCallUserModal(false)}
-          className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  </div>
-)}
-{/* Call Modal */}
-{/* Call Modal */}
-{showCallModal && (
-  <div className="fixed inset-0 bg-black z-50 flex flex-col">
-    {/* Video Area */}
-    <div className="flex-1 relative overflow-hidden">
-      {/* Remote Video - Always rendered but hidden when not connected */}
-      <video
-        ref={userVideo}
-        autoPlay
-        playsInline
-        muted={false}
-        className={`absolute inset-0 w-full h-full object-contain bg-black ${callAccepted ? 'block' : 'hidden'}`}
-      />
-      
-      {/* Fallback UI when not connected */}
-      {!callAccepted && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center h-full text-white">
-          <div className="w-32 h-32 rounded-full bg-gray-800 flex items-center justify-center mb-4">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-16 w-16 text-gray-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-              />
-            </svg>
-          </div>
-          <h3 className="text-2xl font-semibold">
-            {callTarget?.customId || callTarget?.socketId.slice(0, 6)}
-          </h3>
-          <p className="text-gray-400 mt-2">
-            {callingStatus || "Connecting..."}
-          </p>
-        </div>
+    {showNewMeetingModal && (
+      <ShowNewMeetingModal setShowNewMeetingModal={setShowNewMeetingModal} createMeetingRoom={createMeetingRoom} />
       )}
 
-      {/* Local Video */}
-      {stream && (
-        <div className="absolute bottom-4 right-4 w-32 h-48 rounded-lg overflow-hidden bg-black border border-gray-700">
-          <video
-            ref={myVideo}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover"
-          />
+      {/* Join Meeting Modal */}
+      {showJoinMeetingModal && (
+        <ShowJoinMeetingModal setShowJoinMeetingModal={setShowJoinMeetingModal} /> 
+      )}
+
+      {/* Record Screen Modal */}
+      {showRecordScreenModal && (
+        <ShowRecordScreenModal setShowRecordScreenModal={setShowRecordScreenModal} startRecording={startRecording} />
+      )}
+
+      {/* Call User Modal */}
+      {showCallUserModal && (
+        <ShowCallUserModal registeredUsers={registeredUsers} setShowCallUserModal={setShowCallUserModal} setIdToCall={setIdToCall} callUser={callUser} me={me} />
+      )}
+      {/* Call Modal */}
+      {showCallModal && (
+        <div className="fixed inset-0 bg-black z-50 flex flex-col">
+          <VideoCallArea userVideo={userVideo} myVideo={myVideo} callTarget={callTarget} callAccepted={callAccepted} callingStatus={callingStatus} stream={stream} />
+          <ControlPanel isMuted={isMuted} isVideoOn={isVideoOn} toggleMute={toggleMute} toggleVideo={toggleVideo} endCall={endCall} setShowCallModal={setShowCallModal} />
         </div>
       )}
-    </div>
-
-    {/* Control Panel */}
-    <div className="bg-gray-900 bg-opacity-80 py-4 px-6 flex justify-center items-center">
-      <div className="flex space-x-6 items-end"> {/* Added items-end to align at the bottom */}
-        {/* Mute Button */}
-        <div className="flex flex-col items-center">
-          <button
-            onClick={toggleMute}
-            className={`flex items-center justify-center w-14 h-14 rounded-full ${isMuted ? 'bg-red-600 text-white' : 'bg-gray-700 text-white'}`}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-6 w-6"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              {isMuted ? (
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
-                  clipRule="evenodd"
-                />
-              ) : (
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
-                />
-              )}
-            </svg>
-          </button>
-          <span className="text-xs mt-2 text-white">{isMuted ? "Unmute" : "Mute"}</span>
-        </div>
-
-        {/* Video Button */}
-        <div className="flex flex-col items-center">
-          <button
-            onClick={toggleVideo}
-            className={`flex items-center justify-center w-14 h-14 rounded-full ${!isVideoOn ? 'bg-red-600 text-white' : 'bg-gray-700 text-white'}`}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-6 w-6"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
-              />
-            </svg>
-          </button>
-          <span className="text-xs mt-2 text-white">{isVideoOn ? "Stop Video" : "Start Video"}</span>
-        </div>
-
-        {/* End Call Button */}
-        <div className="flex flex-col items-center">
-          <button
-            onClick={() => {
-              endCall();
-              setShowCallModal(false);
-            }}
-            className="flex items-center justify-center w-14 h-14 rounded-full bg-red-600 text-white"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-6 w-6"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z"
-              />
-            </svg>
-          </button>
-          <span className="text-xs mt-2 text-white">End Call</span>
-        </div>
-      </div>
-    </div>
-  </div>
-)}
   </div>
 );
   
