@@ -5,7 +5,7 @@ import Peer, { SignalData } from "simple-peer";
 import RegisterUsername from "./Register";
 import ControlPanel from "./ControlPanel";
 import VideoCallArea from "./VideoCallArea";
-import ShowCallUserModal from "./showCallUserModal";
+// import ShowCallUserModal from "./showCallUserModal";
 import ShowJoinMeetingModal from "./ShowJoinMeetingModal";
 import ShowRecordScreenModal from "./ShowRecordScreenModal";
 import ShowNewMeetingModal from "./ShowNewMeetingModal";
@@ -952,7 +952,7 @@ const endCall = () => {
 
       {/* Call User Modal */}
       {showCallUserModal && (
-        <ShowCallUserModal registeredUsers={registeredUsers} setShowCallUserModal={setShowCallUserModal} setIdToCall={setIdToCall} callUser={callUser} me={me} />
+        // <ShowCallUserModal registeredUsers={registeredUsers} setShowCallUserModal={setShowCallUserModal} setIdToCall={setIdToCall} callUser={callUser} me={me} />
       )}
       {/* Call Modal */}
       {showCallModal && (
