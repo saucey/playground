@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 import RegisterUsername from "./Register";
@@ -11,6 +11,8 @@ import ShowRecordScreenModal from "./ShowRecordScreenModal";
 import ShowNewMeetingModal from "./ShowNewMeetingModal";
 import AppCards from "./AppCards";
 import CallingStatus from "./CallingStatus";
+import { combineAppliedNumericalValuesIncludingErrorValues } from "recharts/types/state/selectors/axisSelectors";
+import RoomView from "./RoomView";
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_ENV === 'local' 
   ? "http://localhost:5555"
@@ -67,6 +69,7 @@ const [isVideoOn, setIsVideoOn] = useState(true);
 const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
 
 const myVideo = useRef<HTMLVideoElement>(null);
+const myVideoRoom = useRef<HTMLVideoElement>(null);
 const userVideo = useRef<HTMLVideoElement>(null);
 const connectionRef = useRef<Peer.Instance | null>(null);
 const outgoingRingtoneRef = useRef<HTMLAudioElement | null>(null);
@@ -82,7 +85,9 @@ const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   
 const [meetingRooms, setMeetingRooms] = useState<MeetingRoom[]>([]);
 const [currentRoom, setCurrentRoom] = useState<MeetingRoom | null>(null);
-const [showMeetingRooms, setShowMeetingRooms] = useState(false);
+  const [showMeetingRooms, setShowMeetingRooms] = useState(false);
+  
+  const [roomVideoReady, setRoomVideoReady] = useState(false);
   
   useEffect(() => {
     console.log(process.env.NEXT_PUBLIC_SOCKET_ENV)
@@ -155,22 +160,6 @@ useEffect(() => {
         inCallWith: me
       });
       
-      // Show a notification to the callee
-      if (Notification.permission === "granted") {
-        new Notification("Incoming Call", {
-          body: `${callerCustomId} is calling you`,
-          icon: "/favicon.ico"
-        });
-      } else if (Notification.permission !== "denied") {
-        Notification.requestPermission().then(permission => {
-          if (permission === "granted") {
-            new Notification("Incoming Call", {
-              body: `${callerCustomId} is calling you`,
-              icon: "/favicon.ico"
-            });
-          }
-        });
-      }
     }
   });
 
@@ -241,8 +230,10 @@ const createMeetingRoom = (name: string) => {
 };
 
 // Join room handler
-const joinRoom = (roomId: string) => {
-  if (socket) {
+  const joinRoom = (roomId: string) => {
+    if (socket) {
+
+    console.log(stream);
     socket.emit("join-room", roomId);
     setCurrentRoom(meetingRooms.find(r => r.id === roomId) || null);
   }
@@ -298,57 +289,6 @@ const NewMeetingModal = () => (
   </form>
 );
 
-// Add room view component
-const RoomView = () => (
-  <div className="fixed inset-0 bg-black z-50 flex flex-col">
-    <div className="p-4 bg-gray-800 text-white flex justify-between">
-      <h2 className="text-xl font-bold">{currentRoom?.name}</h2>
-      <button onClick={leaveRoom} className="text-red-500">Leave</button>
-    </div>
-    
-    <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-      {/* Render local video */}
-      <div className="bg-black rounded-lg overflow-hidden">
-        <video
-          ref={myVideo}
-          autoPlay
-          playsInline
-          muted
-          className="w-full h-full object-cover"
-        />
-        <div className="absolute bottom-2 left-2 text-white bg-black bg-opacity-50 px-2 py-1 rounded">
-          You
-        </div>
-      </div>
-      
-      {/* Render remote participants */}
-      {currentRoom?.participants
-        .filter(id => id !== me)
-        .map(id => {
-          const user = registeredUsers.find(u => u.socketId === id);
-          return (
-            <div key={id} className="bg-black rounded-lg overflow-hidden">
-              <div className="w-full h-full flex items-center justify-center bg-gray-900">
-                <span className="text-white">
-                  {user?.customId || "Participant"}
-                </span>
-              </div>
-              <div className="absolute bottom-2 left-2 text-white bg-black bg-opacity-50 px-2 py-1 rounded">
-                {user?.customId || "Participant"}
-              </div>
-            </div>
-          );
-        })}
-    </div>
-    
-    {/* Controls */}
-    <div className="bg-gray-900 py-4 flex justify-center">
-      <div className="flex space-x-4">
-        {/* ... existing call controls ... */}
-      </div>
-    </div>
-  </div>
-);
 
 
 // Update the startRecording function to only record the screen
@@ -463,35 +403,35 @@ const closePreviewModal = () => {
   setRecordedChunks([]);
 };
 
-  const isCallButtonDisabled = () => {
-    const targetUser = registeredUsers.find(u => u.socketId === idToCall);
-    return !me || !idToCall || callAccepted || callingStatus !== "" || receivingCall || 
-           (targetUser?.inCall && targetUser.inCallWith !== me);
-  };
+const isCallButtonDisabled = () => {
+  const targetUser = registeredUsers.find(u => u.socketId === idToCall);
+  return !me || !idToCall || callAccepted || callingStatus !== "" || receivingCall || 
+          (targetUser?.inCall && targetUser.inCallWith !== me);
+};
 
-  const playOutgoingRingtone = () => {
-    console.log('playing outgoing ringtone');
-    // Always create a new instance to ensure fresh state
-    if (outgoingRingtoneRef.current) {
-      outgoingRingtoneRef.current.pause();
-      outgoingRingtoneRef.current.currentTime = 0;
-      outgoingRingtoneRef.current = null;
-    }
-    
-    outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
-    outgoingRingtoneRef.current.loop = true;
+const playOutgoingRingtone = () => {
+  console.log('playing outgoing ringtone');
+  // Always create a new instance to ensure fresh state
+  if (outgoingRingtoneRef.current) {
+    outgoingRingtoneRef.current.pause();
+    outgoingRingtoneRef.current.currentTime = 0;
+    outgoingRingtoneRef.current = null;
+  }
   
-    outgoingRingtoneRef.current
-      .play()
-      .then(() => {
-        console.log("Outgoing ringtone playing");
-      })
-      .catch((e) => {
-        console.error("Could not play outgoing ringtone:", e);
-        setNeedsUserInteraction(true);
-      });
-  };
-  
+  outgoingRingtoneRef.current = new Audio(RINGTONE_OUTGOING);
+  outgoingRingtoneRef.current.loop = true;
+
+  outgoingRingtoneRef.current
+    .play()
+    .then(() => {
+      console.log("Outgoing ringtone playing");
+    })
+    .catch((e) => {
+      console.error("Could not play outgoing ringtone:", e);
+      setNeedsUserInteraction(true);
+    });
+};
+
 
   const playIncomingRingtone = () => {
     stopIncomingRingtone(); // <-- Add this to prevent stacking
@@ -578,8 +518,6 @@ const closePreviewModal = () => {
     if (userVideo.current) {
       userVideo.current.srcObject = null;
     }
-
-
   };
 
   // Initialize media stream
@@ -600,19 +538,7 @@ const closePreviewModal = () => {
           }
         });
         setStream(mediaStream);
-  
-        const tryAssignStream = () => {
-          if (myVideo.current) {
-            myVideo.current.srcObject = mediaStream;
-            myVideo.current.onloadedmetadata = () => {
-              myVideo.current?.play().catch((e) => console.error("Video play error:", e));
-            };
-          } else {
-            requestAnimationFrame(tryAssignStream);
-          }
-        };
-  
-        tryAssignStream();
+
       } catch (err) {
         console.error("Failed to get media devices", err);
         setError("Could not access camera/microphone. Please check permissions.");
@@ -638,6 +564,22 @@ const closePreviewModal = () => {
       };
     }
   }, [showCallModal, stream]);
+
+// Use this effect to set up the room video
+  useEffect(() => {
+  if (currentRoom && stream && myVideoRoom.current) {
+    myVideoRoom.current.srcObject = stream;
+    myVideoRoom.current.onloadedmetadata = () => {
+      myVideoRoom.current?.play().catch(e => {
+        console.error("Room video play error:", e);
+      });
+    };
+    setRoomVideoReady(true);
+  } else {
+    setRoomVideoReady(false);
+  }
+}, [currentRoom, stream]);
+  
 
   // Mobile audio workaround
   useEffect(() => {
@@ -854,8 +796,6 @@ const answerCall = () => {
   });
 
   peer.on("stream", (currentStream: MediaStream) => {
-    console.log('got stream');
-    
     // Use a function that will retry until the video element is available
     const trySetStream = () => {
       if (userVideo.current) {
@@ -874,6 +814,7 @@ const answerCall = () => {
   });
 
   peer.on("connect", () => {
+    stopIncomingRingtone();
     setCallAccepted(true);
     setCallingStatus("");
   });
@@ -933,7 +874,7 @@ const endCall = () => {
 
     {renderMeetingRooms()}
   
-    {currentRoom && <RoomView />}
+    {currentRoom && <RoomView currentRoom={currentRoom} myVideoRoom={myVideoRoom} leaveRoom={leaveRoom} registeredUsers={registeredUsers} me={me} roomVideoReady={roomVideoReady} />}
 
     {showNewMeetingModal && (
       <ShowNewMeetingModal setShowNewMeetingModal={setShowNewMeetingModal} createMeetingRoom={createMeetingRoom} />
