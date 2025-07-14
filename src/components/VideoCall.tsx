@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import io, { Socket } from "socket.io-client";
 import Peer, { SignalData } from "simple-peer";
 import RegisterUsername from "./Register";
@@ -242,7 +242,7 @@ const createMeetingRoom = (name: string) => {
 // Leave room handler
 const leaveRoom = () => {
   if (socket && currentRoom) {
-    socket.emit("leave-room", currentRoom.id);
+    // socket.emit("leave-room", currentRoom.id);
     setCurrentRoom(null);
   }
 };
@@ -409,7 +409,7 @@ const isCallButtonDisabled = () => {
           (targetUser?.inCall && targetUser.inCallWith !== me);
 };
 
-const playOutgoingRingtone = () => {
+const playOutgoingRingtone = useCallback(() => {
   console.log('playing outgoing ringtone');
   // Always create a new instance to ensure fresh state
   if (outgoingRingtoneRef.current) {
@@ -430,10 +430,10 @@ const playOutgoingRingtone = () => {
       console.error("Could not play outgoing ringtone:", e);
       setNeedsUserInteraction(true);
     });
-};
+}, []);
 
 
-  const playIncomingRingtone = () => {
+  const playIncomingRingtone = useCallback(() => {
     stopIncomingRingtone(); // <-- Add this to prevent stacking
   
     if (typeof window !== 'undefined' && window.AudioContext) {
@@ -465,16 +465,16 @@ const playOutgoingRingtone = () => {
           });
         });
     }
-  };
+  }, []);
   
-  const stopOutgoingRingtone = () => {
+  const stopOutgoingRingtone = useCallback(() => {
     if (outgoingRingtoneRef.current) {
       outgoingRingtoneRef.current.pause();
       outgoingRingtoneRef.current.currentTime = 0;
     }
-  };
+  }, []);
 
-  const stopIncomingRingtone = () => {
+  const stopIncomingRingtone = useCallback(() => {
     // Stop Web Audio version
     if (incomingRingtoneWebRef.current) {
       try {
@@ -496,7 +496,7 @@ const playOutgoingRingtone = () => {
       }
       incomingRingtoneHTMLRef.current = null;
     }
-  };
+  }, []);
 
   const resetCallState = () => {
     setCallAccepted(false);
@@ -683,18 +683,18 @@ const playOutgoingRingtone = () => {
   };
 
   // User registration
-  const registerUser = () => {
+  const registerUser = useCallback(() => {
     if (!customId.trim()) {
       setError("Please enter a custom ID");
       return;
     }
     setError(null);
     socket.emit("register", customId);
-  };
+  }, [socket, customId]);
 
   // Call management
 // Update your callUser function to use the modal
-const callUser = (id: string) => {
+const callUser = useCallback((id: string) => {
   resetCallState();
   
   if (!stream) {
@@ -772,9 +772,9 @@ const callUser = (id: string) => {
   });
 
   connectionRef.current = peer;
-};
+}, [stream, socket, me, customId, registeredUsers]);
 // Update the answerCall function to show the call modal
-const answerCall = () => {
+const answerCall = useCallback(() => {
   // Prevent ringtone from restarting
   setReceivingCall(false);
   stopIncomingRingtone();
@@ -833,7 +833,7 @@ const answerCall = () => {
 
   peer.signal(callerSignal);
   connectionRef.current = peer;
-};
+}, [stream, socket, callerSignal, caller]);  
 
 // Update the rejectCall function
 const rejectCall = () => {
