@@ -39,7 +39,7 @@ interface MeetingRoom {
 }
 
 const VideoCall: React.FC = () => {
-
+const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
 const [showNewMeetingModal, setShowNewMeetingModal] = useState(false);
 const [showJoinMeetingModal, setShowJoinMeetingModal] = useState(false);
 const [showRecordScreenModal, setShowRecordScreenModal] = useState(false);
@@ -85,25 +85,152 @@ const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   
 const [meetingRooms, setMeetingRooms] = useState<MeetingRoom[]>([]);
 const [currentRoom, setCurrentRoom] = useState<MeetingRoom | null>(null);
-  const [showMeetingRooms, setShowMeetingRooms] = useState(false);
+const [showMeetingRooms, setShowMeetingRooms] = useState(false);
+const [roomVideoReady, setRoomVideoReady] = useState(false);
   
-  const [roomVideoReady, setRoomVideoReady] = useState(false);
-  
-  useEffect(() => {
-    console.log(process.env.NEXT_PUBLIC_SOCKET_ENV)
-    const newSocket = io(SOCKET_URL, {
-      transports: ["websocket", "polling"], // Fallback to polling if WS fails
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      autoConnect: true,
+  // Add this state to track room streams
+const [roomStreams, setRoomStreams] = useState<Record<string, MediaStream>>({});
+
+
+// Add ref to track room peers
+const roomPeersRef = useRef<Record<string, Peer.Instance>>({});
+
+// Add this effect for room connections
+useEffect(() => {
+  if (!socket || !currentRoom || !stream) return;
+
+  const createPeer = (targetSocketId: string, initiator: boolean) => {
+    const peer = new Peer({
+      initiator,
+      trickle: false,
+      stream: stream,
     });
+
+    peer.on("signal", (signal) => {
+      socket.emit("room-signal", {
+        targetId: targetSocketId,
+        signal,
+        roomId: currentRoom.id
+      });
+    });
+
+    peer.on("stream", (remoteStream) => {
+      setRoomStreams(prev => ({ ...prev, [targetSocketId]: remoteStream }));
+    });
+
+    peer.on("error", (err) => {
+      console.error("Peer error:", err);
+      delete roomPeersRef.current[targetSocketId];
+      setRoomStreams(prev => {
+        const newStreams = { ...prev };
+        delete newStreams[targetSocketId];
+        return newStreams;
+      });
+    });
+
+    peer.on("close", () => {
+      delete roomPeersRef.current[targetSocketId];
+      setRoomStreams(prev => {
+        const newStreams = { ...prev };
+        delete newStreams[targetSocketId];
+        return newStreams;
+      });
+    });
+
+    return peer;
+  };
+
+  // Connect to existing participants
+  currentRoom.participants.forEach(participantId => {
+    if (participantId === me || roomPeersRef.current[participantId]) return;
     
-    setSocket(newSocket);
+    const peer = createPeer(participantId, true);
+    roomPeersRef.current[participantId] = peer;
+  });
+
+  // Handle incoming signals
+  const handleRoomSignal = ({ from, signal }: { from: string; signal: SignalData }) => {
+    if (from === me) return;
     
-    return () => {
-      newSocket.disconnect();
-    };
-  }, []);
+    let peer = roomPeersRef.current[from];
+    if (!peer) {
+      peer = createPeer(from, false);
+      roomPeersRef.current[from] = peer;
+    }
+    
+    peer.signal(signal);
+  };
+
+  // Handle new participants
+  const handleNewParticipant = (participantId: string) => {
+    if (participantId === me || roomPeersRef.current[participantId]) return;
+    
+    const peer = createPeer(participantId, true);
+    roomPeersRef.current[participantId] = peer;
+  };
+
+  // Handle leaving participants
+  const handleParticipantLeft = (participantId: string) => {
+    const peer = roomPeersRef.current[participantId];
+    if (peer) {
+      peer.destroy();
+      delete roomPeersRef.current[participantId];
+    }
+    
+    setRoomStreams(prev => {
+      const newStreams = { ...prev };
+      delete newStreams[participantId];
+      return newStreams;
+    });
+  };
+
+  socket.on("room-signal", handleRoomSignal);
+  socket.on("new-participant", handleNewParticipant);
+  socket.on("participant-left", handleParticipantLeft);
+  socket.on("room-updated", (room: MeetingRoom) => {
+    if (currentRoom && room.id === currentRoom.id) {
+      setCurrentRoom(room);
+    }
+  });
+
+  return () => {
+    socket.off("room-signal", handleRoomSignal);
+    socket.off("new-participant", handleNewParticipant);
+    socket.off("participant-left", handleParticipantLeft);
+    socket.off("room-updated");
+  };
+}, [currentRoom, socket, stream, me]);
+
+// Update leaveRoom handler to clean up peers
+const leaveRoom = () => {
+  if (socket && currentRoom) {
+    // Clean up all peer connections
+    Object.values(roomPeersRef.current).forEach(peer => peer.destroy());
+    roomPeersRef.current = {};
+    setRoomStreams({});
+    
+    setCurrentRoom(null);
+  }
+};
+
+
+  
+  
+useEffect(() => {
+  console.log(process.env.NEXT_PUBLIC_SOCKET_ENV)
+  const newSocket = io(SOCKET_URL, {
+    transports: ["websocket", "polling"], // Fallback to polling if WS fails
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1000,
+    autoConnect: true,
+  });
+  
+  setSocket(newSocket);
+  
+  return () => {
+    newSocket.disconnect();
+  };
+}, []);
 
 // Socket event listeners
 useEffect(() => {
@@ -236,14 +363,6 @@ const createMeetingRoom = (name: string) => {
     console.log(stream);
     socket.emit("join-room", roomId);
     setCurrentRoom(meetingRooms.find(r => r.id === roomId) || null);
-  }
-};
-
-// Leave room handler
-const leaveRoom = () => {
-  if (socket && currentRoom) {
-    // socket.emit("leave-room", currentRoom.id);
-    setCurrentRoom(null);
   }
 };
 
@@ -874,7 +993,7 @@ const endCall = () => {
 
     {renderMeetingRooms()}
   
-    {currentRoom && <RoomView currentRoom={currentRoom} myVideoRoom={myVideoRoom} leaveRoom={leaveRoom} registeredUsers={registeredUsers} me={me} roomVideoReady={roomVideoReady} />}
+    {currentRoom && <RoomView currentRoom={currentRoom} myVideoRoom={myVideoRoom} leaveRoom={leaveRoom} registeredUsers={registeredUsers} me={me} roomVideoReady={roomVideoReady} roomStreams={roomStreams} />}
 
     {showNewMeetingModal && (
       <ShowNewMeetingModal setShowNewMeetingModal={setShowNewMeetingModal} createMeetingRoom={createMeetingRoom} />
