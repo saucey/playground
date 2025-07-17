@@ -26,56 +26,59 @@ const RoomView = ({ currentRoom, myVideoRoom, leaveRoom, registeredUsers, me, ro
         <button onClick={leaveRoom} className="text-red-500">Leave</button>
       </div>
       
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-        {/* Render local video */}
-        <div className="bg-black rounded-lg overflow-hidden border border-red-700">
-          <video
-            ref={myVideoRoom}
-            autoPlay
-            playsInline
-            muted={false}
-            className="w-full h-full object-cover"
-          />
-          <div className="absolute bottom-2 left-2 text-white bg-black bg-opacity-50 px-2 py-1 rounded">
-            You
-          </div>
-        
-          {!roomVideoReady && (
-              <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-                <span className="text-white">Setting up your video...</span>
-              </div>
-          )}
-        </div>
-        
-        {/* Remote participants */}
-        {participants
-          .filter(id => id !== me)
-          .map(id => {
-            const user = registeredUsers.find(u => u.socketId === id);
-            if (!user) return null;
-            
-            return (
-              <div key={id} className="relative bg-black rounded-lg overflow-hidden">
-                {roomStreams[id] ? (
-                  <video
-                    ref={el => videoRefs.current[id] = el}
-                    autoPlay
-                    playsInline
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center bg-gray-900">
-                    <div className="bg-gray-700 rounded-full w-16 h-16 flex items-center justify-center text-white">
-                      {user.customId.charAt(0).toUpperCase()}
-                    </div>
-                  </div>
-                )}
-                <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-sm">
-                  {user.customId}
+      {/* Scrollable video container */}
+      <div className="flex-1 overflow-y-auto"> {/* Added overflow for scrolling */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-4"> {/* Responsive columns */}
+          {/* Render local video */}
+          <div className="relative bg-black rounded-lg overflow-hidden border border-red-700 min-h-[200px]"> {/* Minimum height */}
+            <video
+              ref={myVideoRoom}
+              autoPlay
+              playsInline
+              muted={false}
+              className="w-full h-full object-cover"
+            />
+            <div className="absolute bottom-2 left-2 text-white bg-black bg-opacity-50 px-2 py-1 rounded">
+              You
+            </div>
+          
+            {!roomVideoReady && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+                  <span className="text-white">Setting up your video...</span>
                 </div>
-              </div>
-            );
-          })}
+            )}
+          </div>
+          
+          {/* Remote participants */}
+          {participants
+            .filter(id => id !== me)
+            .map(id => {
+              const user = registeredUsers.find(u => u.socketId === id);
+              if (!user) return null;
+              
+              return (
+                <div key={id} className="relative bg-black rounded-lg overflow-hidden min-h-[200px]"> {/* Minimum height */}
+                  {roomStreams[id] ? (
+                    <video
+                      ref={el => videoRefs.current[id] = el}
+                      autoPlay
+                      playsInline
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-gray-900">
+                      <div className="bg-gray-700 rounded-full w-16 h-16 flex items-center justify-center text-white">
+                        {user.customId.charAt(0).toUpperCase()}
+                      </div>
+                    </div>
+                  )}
+                  <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-sm">
+                    {user.customId}
+                  </div>
+                </div>
+              );
+            })}
+        </div>
       </div>
       
       {/* Controls */}
