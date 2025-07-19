@@ -4,7 +4,7 @@ const RegisterUsername = ({registerUser, customId, setCustomId}) => {
   return (
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
       <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-md">
-        <h2 className="text-2xl font-bold text-center mb-10 text-gray-700">Welcome to Video Call</h2>
+        <h2 className="text-2xl font-bold text-center mb-10 text-gray-700">Welcome to Video Call hello phil</h2>
         <div className="space-y-4">
           <div className="mb-4">
             <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-1">
